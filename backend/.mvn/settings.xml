@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 项目级 Maven 配置：JDK 8u131 证书库不含 Maven Central 现用根证书，
+     统一走阿里云镜像。仅对本项目生效（通过 .mvn/maven.config 的 -s 参数加载）。 -->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <mirrors>
+    <mirror>
+      <id>aliyun-public</id>
+      <mirrorOf>*</mirrorOf>
+      <name>aliyun public mirror</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+    </mirror>
+  </mirrors>
+</settings>

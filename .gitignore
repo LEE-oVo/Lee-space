@@ -1,0 +1,26 @@
+# Node
+node_modules/
+dist/
+*.local
+
+# Java
+target/
+*.class
+
+# IDE
+.idea/
+.vscode/
+*.iml
+.aicoding-chat-workspace
+
+# 系统与日志
+.DS_Store
+Thumbs.db
+*.log
+
+# 部署产物
+*.tar.gz
+deploy/.env
+
+# 远程部署临时脚本（含服务器凭据，严禁入库）
+.deploy-tmp/

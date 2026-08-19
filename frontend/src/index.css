@@ -1,0 +1,151 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --neon-cyan: #22d3ee;
+  --neon-magenta: #e879f9;
+}
+
+html,
+body {
+  background: #05060f;
+  color: #e2e8f0;
+  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  overflow-x: hidden;
+}
+
+/* 全局扫描线效果 */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.08) 0px,
+    rgba(0, 0, 0, 0.08) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: 0.5;
+}
+
+/* 赛博网格背景（3D 降级方案） */
+.cyber-grid {
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.07) 1px, transparent 1px);
+  background-size: 48px 48px;
+  animation: grid-drift 18s linear infinite;
+}
+
+@keyframes grid-drift {
+  from { background-position: 0 0; }
+  to { background-position: 48px 48px; }
+}
+
+/* Glitch 故障字 */
+.glitch {
+  position: relative;
+  text-shadow:
+    0 0 8px rgba(34, 211, 238, 0.8),
+    0 0 32px rgba(34, 211, 238, 0.4);
+}
+.glitch::before,
+.glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.glitch::before {
+  color: var(--neon-magenta);
+  animation: glitch-slice-a 2.7s infinite linear alternate-reverse;
+  clip-path: inset(20% 0 55% 0);
+  transform: translateX(-2px);
+  opacity: 0.85;
+}
+.glitch::after {
+  color: var(--neon-cyan);
+  animation: glitch-slice-b 3.1s infinite linear alternate-reverse;
+  clip-path: inset(60% 0 15% 0);
+  transform: translateX(2px);
+  opacity: 0.85;
+}
+@keyframes glitch-slice-a {
+  0% { clip-path: inset(12% 0 78% 0); }
+  20% { clip-path: inset(54% 0 22% 0); }
+  40% { clip-path: inset(80% 0 4% 0); }
+  60% { clip-path: inset(30% 0 48% 0); }
+  80% { clip-path: inset(66% 0 12% 0); }
+  100% { clip-path: inset(8% 0 72% 0); }
+}
+@keyframes glitch-slice-b {
+  0% { clip-path: inset(68% 0 10% 0); }
+  20% { clip-path: inset(10% 0 74% 0); }
+  40% { clip-path: inset(42% 0 36% 0); }
+  60% { clip-path: inset(84% 0 2% 0); }
+  80% { clip-path: inset(22% 0 60% 0); }
+  100% { clip-path: inset(50% 0 30% 0); }
+}
+
+/* 霓虹渐变描边卡片 */
+.neon-border {
+  position: relative;
+  background: #0a0d1c;
+  border: 1px solid rgba(34, 211, 238, 0.25);
+}
+.neon-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.6), transparent 40%, transparent 60%, rgba(232, 121, 249, 0.6));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* 打字机光标 */
+.type-cursor::after {
+  content: '▌';
+  animation: blink 1s step-end infinite;
+  color: var(--neon-cyan);
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* 全屏故障特效（彩蛋） */
+.fullscreen-glitch {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, rgba(232, 121, 249, 0.12) 0 2px, transparent 2px 6px),
+    repeating-linear-gradient(90deg, rgba(34, 211, 238, 0.12) 0 2px, transparent 2px 8px);
+  animation: flash-shake 0.12s infinite;
+}
+@keyframes flash-shake {
+  0% { transform: translate(0, 0); filter: hue-rotate(0deg); }
+  25% { transform: translate(-6px, 3px); filter: hue-rotate(60deg); }
+  50% { transform: translate(4px, -4px); filter: hue-rotate(-40deg); }
+  75% { transform: translate(-3px, -2px); filter: hue-rotate(20deg); }
+  100% { transform: translate(5px, 2px); filter: hue-rotate(0deg); }
+}
+
+/* 数据看板柱状条 */
+.bar-glow {
+  background: linear-gradient(180deg, var(--neon-cyan), rgba(34, 211, 238, 0.15));
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.6);
+}
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: #05060f; }
+::-webkit-scrollbar-thumb { background: rgba(34, 211, 238, 0.3); border-radius: 4px; }
