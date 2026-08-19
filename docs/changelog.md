@@ -2,6 +2,14 @@
 
 > 倒序记录，每次功能变更 / Bug 修复 / 部署调整都需追加一条。
 
+## [0.1.4] - 2026-08-19
+
+### 仓库
+- 代码首次推送至 GitHub：https://github.com/LEE-oVo/Lee-space（main 分支）
+- 推送通道：SSH over ssh.github.com:443（本机网络无法直连 github.com HTTPS，已配 ~/.ssh/config）
+- 敏感文件均未入库：.deploy-tmp/（含服务器凭据）、deploy/.env（生产密码）已 gitignore
+- 验证截图归入 docs/screenshots/
+
 ## [0.1.3] - 2026-08-19
 
 ### 上线
