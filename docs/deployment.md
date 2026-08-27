@@ -46,12 +46,23 @@ curl http://localhost/actuator/health
 
 注意：deploy/.env 中的数据库密码为随机生成的强密码，请妥善保存；备份恢复依赖它。
 
-## 三、配置项（docker-compose.yml 环境变量）
+## 三、配置中心（唯一配置入口：deploy/.env）
+
+自 v0.1.5 起，所有可调参数统一收敛到 `deploy/.env`（模板见 `deploy/.env.example`，含逐项注释）。
+docker compose 启动时自动读取同目录 `.env`；修改后执行 `docker compose up -d` 生效。
+后端与前端代码中的默认值仅用于本地开发，生产一律以 `.env` 为准。
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| MYSQL_ROOT_PASSWORD | cyber_show_root_2026 | 生产部署前必须修改 |
-| MYSQL_PASSWORD | cyber123 | 应用账号密码，生产部署前必须修改 |
+| HTTP_PORT | 80 | 对外端口，需与安全组一致 |
+| MYSQL_DB / MYSQL_USER | cyber_show / cyber | 库名与应用账号 |
+| MYSQL_ROOT_PASSWORD | 随机生成 | 生产部署自动生成，务必另存 |
+| MYSQL_PASSWORD | 随机生成 | 应用账号密码，备份恢复依赖 |
+| MYSQL_BUFFER_POOL | 128M | 升配后可调大（约内存一半） |
+| MYSQL_MAX_CONNECTIONS | 50 | 最大连接数 |
+| MYSQL_PERFORMANCE_SCHEMA | OFF | 省内存；需性能分析改 ON |
+| JAVA_OPTS | -Xms128m -Xmx384m | 后端 JVM 内存 |
+| TZ | Asia/Shanghai | 容器时区 |
 
 ## 四、域名 + HTTPS（备案完成后）
 

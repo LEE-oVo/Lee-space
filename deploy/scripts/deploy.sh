@@ -17,15 +17,12 @@ if ! command -v docker &> /dev/null; then
 fi
 docker compose version &> /dev/null || { echo "docker compose 插件缺失，请安装 docker-compose-plugin"; exit 1; }
 
-# 2. 生成 .env（首次部署时随机生成强密码）
+# 2. 生成 .env（首次部署：基于模板复制，仅随机替换数据库密码）
 if [ ! -f .env ]; then
-    echo ">>> generating .env with random passwords..."
-    {
-        echo "MYSQL_ROOT_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-24)"
-        echo "MYSQL_DB=cyber_show"
-        echo "MYSQL_USER=cyber"
-        echo "MYSQL_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-24)"
-    } > .env
+    echo ">>> generating .env from template with random passwords..."
+    cp .env.example .env
+    sed -i "s|^MYSQL_ROOT_PASSWORD=.*|MYSQL_ROOT_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-24)|" .env
+    sed -i "s|^MYSQL_PASSWORD=.*|MYSQL_PASSWORD=$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-24)|" .env
     chmod 600 .env
     echo ">>> .env generated (密码已随机生成并保存在 deploy/.env，请妥善保存)"
 fi
