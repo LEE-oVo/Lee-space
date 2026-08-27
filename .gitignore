@@ -21,6 +21,7 @@ Thumbs.db
 # 部署产物
 *.tar.gz
 deploy/.env
+uploads/
 
 # 远程部署临时脚本（含服务器凭据，严禁入库）
 .deploy-tmp/

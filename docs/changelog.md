@@ -2,6 +2,17 @@
 
 > 倒序记录，每次功能变更 / Bug 修复 / 部署调整都需追加一条。
 
+## [0.2.0] - 2026-08-27
+
+### 新站点：个人作品网站（替换赛博技术秀场）
+- 新增 `portfolio/` 前后端分离项目，替换 47.119.128.59 上的原赛博站点（80 端口）
+- 后端：Spring Boot 2.7.18（JDK 8）+ MyBatis-Plus 3.5.5 + JWT；/api/public/** 公开、/api/admin/** 全鉴权；上传后缀白名单（pdf/html、mp4、jpg/png/webp）
+- 前端：React 18 + Vite + AntD 5 + pdfjs-dist；前台文件内嵌预览（pdfjs/iframe，不下载）+ 视频弹窗播放；后台登录/文件管理/视频管理/修改密码（懒加载）
+- 部署：沿用 playbook.md 流程，compose 四容器（mysql+backend+nginx+前端构建），配置中心 `portfolio/deploy/.env`（随机密码 + JWT 密钥），上传文件持久化到 upload-data 卷
+- 初始管理员 admin/123456（部署文档已提示首次登录后修改）
+- 外网六项验证全通过：首页 200、公开文件/视频接口、登录签发 token、无 token 401、SPA 路由回退
+- 本地自测发现并修复：init.sql 初始 BCrypt hash 与 123456 不匹配，已替换为实测验证的 hash
+
 ## [0.1.6] - 2026-08-27
 
 ### 文档
