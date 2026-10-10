@@ -1,0 +1,19 @@
+[Unit]
+Description=Lee Workbench Server
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/workbench/server
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/workbench/server/.env
+ExecStart=/usr/local/bin/node src/index.js
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/workbench.log
+StandardError=append:/var/log/workbench.log
+
+[Install]
+WantedBy=multi-user.target

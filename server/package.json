@@ -1,0 +1,20 @@
+{
+  "name": "lee-workbench-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "个人工作台后端：登录鉴权、RBAC、DSH 生命周期控制",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "init-db": "node src/scripts/init-db.js",
+    "reset-admin": "node src/scripts/reset-admin.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.21.1"
+  }
+}

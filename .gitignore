@@ -11,8 +11,12 @@ target/
 *.jar
 *.war
 
-# 运行时数据
+# 运行时数据与数据库
 uploads/
+data/
+*.db
+*.db-shm
+*.db-wal
 *.log
 logs/
 
