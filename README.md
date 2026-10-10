@@ -10,15 +10,23 @@
 浏览器
   │
   ├─ /                → Nginx → 工作台后端(127.0.0.1:3001) → 前端静态资源
-  ├─ /api/*           → Nginx → 工作台后端（登录鉴权 + RBAC）
-  └─ /dsh/*           → Nginx → auth_request 校验登录态 → DSH(127.0.0.1:3080)
+  ├─ /wb-api/*        → Nginx → 工作台后端（登录鉴权 + RBAC）
+  ├─ /dsh/*           → Nginx → auth_request 校验登录态 → DSH(127.0.0.1:3080)  ← 页面
+  └─ /api/*           → Nginx → auth_request 校验登录态 → DSH(127.0.0.1:3080)  ← 数据通道
 ```
+
+> **为什么 `/api` 归 DSH？**
+> DSH 前端的页面资源用相对路径（`./assets/…`），但**数据请求写死为绝对路径 `/api/…`**，
+> 其中 `/api/remote.mux` 是 WebSocket 主通道，设置镜像（settings mirror）就跑在上面。
+> 若把 DSH 放在子路径下，`/api/*` 会被送进工作台后端返回 404，导致数据通道断开，
+> 表现为「设置 → 模型」报 `settings are unavailable in this browser`。
+> 因此工作台自身接口统一改为 `/wb-api`，把 `/api` 整段让给 DSH。
 
 DSH 只监听 `127.0.0.1:3080`，安全组不放行该端口，因此**唯一入口就是工作台**：
 
-1. 未登录访问 `/dsh/` → `302 /harness?denied=1`
+1. 未登录访问 `/dsh/` 或 `/api/*` → `302 /harness?denied=1`
 2. 已登录但无 `dsh:access` 权限 → `403` → 同样被拦截
-3. 已登录有权限，但 DSH 未启动 → 反代连接被拒 → `302 /harness?dsh=down`
+3. 已登录有权限，但 DSH 未启动 → 页面 `302 /harness?dsh=down`；数据接口 `503 {"error":"DeepSeek Harness 未启动"}`
 4. 正常情况 → 打开 DSH 官方原生界面（新标签页）
 
 ## 技术栈
@@ -109,9 +117,27 @@ cd Lee-space && bash deploy/setup.sh
 cd /opt/workbench/server && node src/scripts/reset-admin.js admin --force
 ```
 
+## 配置 DeepSeek Harness 的模型 API Key
+
+DSH 按需启停，**在 GUI 里保存的设置可能因远程浏览器的 memory 作用域而在重启后丢失**。
+推荐把 Key 写进环境变量文件，持久生效：
+
+```bash
+sudo vi /opt/workbench/dsh.env     # 或 sudo nano
+
+# 去掉对应行的注释，填入 Key，例如：
+#   DEEPSEEK_API_KEY=sk-xxxxxxxxxxxx
+#   QWEN_TOKEN_PLAN_CN_API_KEY=sk-xxxxxxxxxxxx   # 阿里云百炼 / 通义千问
+#   OPENAI_API_KEY=sk-xxxxxxxxxxxx
+```
+
+该文件由 `dsh.service` 通过 `EnvironmentFile` 注入，权限 `600`、属主 `dsh`，**不入库**。改完后在工作台「DeepSeek Harness」页点「停止」再「启动」即可生效。
+
+也可以通过 GUI 配置（设置 → 模型），但重启 DSH 后建议核对是否保留。
+
 ## 安全注意事项
 
-- `.env` 与 `data/*.db` 已加入 `.gitignore`，不会入库
+- `.env`、`dsh.env` 与 `data/*.db` 已加入 `.gitignore`，不会入库
 - DSH 具备命令执行与文件读写能力，以无 sudo 权限的 `dsh` 用户运行，工作目录隔离在 `/home/dsh/workspace`
 - 当前为 HTTP 访问；绑定域名后建议配置 HTTPS，并将 `.env` 中的 `SECURE_COOKIE` 改为 `true`
 - 服务器位于中国内地，通过域名对外提供服务需完成 ICP 备案

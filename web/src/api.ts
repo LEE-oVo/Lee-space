@@ -2,8 +2,11 @@ import type {
   AuditLog, DshStatus, PermissionRecord, RoleRecord, SystemStats, User, WorkbenchUser,
 } from './types';
 
+// 注意：/api 前缀已整段让给 DeepSeek Harness，工作台自身接口统一走 /wb-api
+const API_PREFIX = '/wb-api';
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(`${API_PREFIX}${path}`, {
     credentials: 'same-origin',
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
     ...init,

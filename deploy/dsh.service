@@ -7,6 +7,8 @@ Type=simple
 User=dsh
 Group=dsh
 Environment=DSH_HOME=/home/dsh/.dsh
+# 模型凭据：编辑 /opt/workbench/dsh.env 填入 API Key，重启 DSH 生效（文件不存在时忽略）
+EnvironmentFile=-/opt/workbench/dsh.env
 WorkingDirectory=/home/dsh/workspace
 ExecStart=/usr/local/bin/dsh web --host 127.0.0.1 --port 3080 --no-open --trusted-host 127.0.0.1:3080 --trusted-host 47.119.128.59
 Restart=no

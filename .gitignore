@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+dsh.env
 
 # 依赖与构建产物
 node_modules/

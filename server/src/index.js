@@ -26,7 +26,9 @@ app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(attachUser);
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'lee-workbench', time: Date.now() }));
+// 注意：/api 前缀已整段让给 DeepSeek Harness（Nginx 反代到 127.0.0.1:3080），
+// 工作台自身接口统一使用 /wb-api，避免两者路径冲突。
+app.get('/wb-api/health', (_req, res) => res.json({ ok: true, service: 'lee-workbench', time: Date.now() }));
 
 // Nginx auth_request 专用：不返回 body，仅用状态码表达结果
 // 401 = 未登录，403 = 无权限，200 = 放行
@@ -44,12 +46,12 @@ app.get('/__auth', (req, res) => {
   }
 });
 
-app.use('/api/auth', authRoutes);
-app.use('/api/dsh', dshRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/system', systemRoutes);
+app.use('/wb-api/auth', authRoutes);
+app.use('/wb-api/dsh', dshRoutes);
+app.use('/wb-api/admin', adminRoutes);
+app.use('/wb-api/system', systemRoutes);
 
-app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }));
+app.use('/wb-api', (_req, res) => res.status(404).json({ error: '接口不存在' }));
 
 if (fs.existsSync(WEB_DIST)) {
   app.use(express.static(WEB_DIST, { index: false, maxAge: '7d' }));
