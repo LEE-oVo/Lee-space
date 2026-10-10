@@ -6,6 +6,7 @@ export interface User {
   avatarColor: string;
   roles: string[];
   permissions: string[];
+  isGuest?: boolean;
   lastLoginAt?: number | null;
   lastLoginIp?: string | null;
 }
@@ -28,11 +29,21 @@ export interface SystemStats {
   platform: string;
   cpuCount: number;
   loadAvg: number[];
-  mem: { totalMb: number; freeMb: number };
-  swap: { totalMb: number; freeMb: number };
-  disk: { totalGb: number; freeGb: number };
+  cpu: { usagePct: number; cores: number };
+  net: { rxBps: number; txBps: number };
+  procs: number;
+  mem: {
+    totalMb: number;
+    freeMb: number;
+    usedMb: number;
+    cachedMb: number;
+    availableMb: number;
+  };
+  swap: { totalMb: number; freeMb: number; usedMb: number };
+  disk: { totalGb: number; freeGb: number; usedGb: number };
   uptimeSeconds: number;
   dsh: { running: boolean; pid: number | null; uptime: number | null };
+  ts: number;
 }
 
 export interface AuditLog {

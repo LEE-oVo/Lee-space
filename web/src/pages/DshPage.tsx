@@ -7,7 +7,7 @@ import { formatDuration } from '../lib/format';
 import type { DshStatus } from '../types';
 
 export function DshPage() {
-  const { can } = useAuth();
+  const { user, can } = useAuth();
   const [params] = useSearchParams();
   const [status, setStatus] = useState<DshStatus | null>(null);
   const [busy, setBusy] = useState<'start' | 'stop' | 'open' | null>(null);
@@ -143,7 +143,9 @@ export function DshPage() {
 
         {!can('dsh:start') && !can('dsh:stop') && (
           <div className="faint" style={{ fontSize: 12, marginTop: 12 }}>
-            当前角色没有启停权限，仅可查看状态。
+            {user?.isGuest
+              ? '游客模式：服务的启停由管理员控制，DSH 启动后你可以直接进入使用。'
+              : '当前角色没有启停权限，仅可查看状态。'}
           </div>
         )}
       </div>
@@ -162,11 +164,15 @@ export function DshPage() {
         <div className="card">
           <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
             <div style={{ fontWeight: 500 }}>运行日志</div>
-            <button className="btn ghost sm" onClick={() => void toggleLog()}>
-              {showLog ? '收起' : '查看'}
-            </button>
+            {!user?.isGuest && (
+              <button className="btn ghost sm" onClick={() => void toggleLog()}>
+                {showLog ? '收起' : '查看'}
+              </button>
+            )}
           </div>
-          {showLog ? (
+          {user?.isGuest ? (
+            <div className="faint" style={{ fontSize: 13 }}>日志含一次性凭证，游客不可查看</div>
+          ) : showLog ? (
             <div className="log-view">
               {log.split('\n').map((line, i) => (
                 <div className="log-line" key={i}>{line}</div>

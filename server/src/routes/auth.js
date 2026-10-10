@@ -81,6 +81,75 @@ router.post('/login', (req, res) => {
   });
 });
 
+// 游客免登录：不发密码、不做爆破计数，只按 IP 做宽松限流
+const guestHits = new Map();
+
+function allowGuest(ip) {
+  const now = nowSeconds();
+  const window = config.guestRateWindowSeconds;
+  const limit = config.guestRateLimit;
+  const entry = guestHits.get(ip);
+  if (!entry || entry.resetAt <= now) {
+    guestHits.set(ip, { count: 1, resetAt: now + window });
+    if (guestHits.size > 5000) {
+      for (const [key, value] of guestHits) if (value.resetAt <= now) guestHits.delete(key);
+    }
+    return true;
+  }
+  if (entry.count >= limit) return false;
+  entry.count += 1;
+  return true;
+}
+
+router.post('/guest', (req, res) => {
+  const ip = clientIp(req);
+
+  if (!config.guestEnabled) {
+    return res.status(403).json({ error: '游客访问已关闭' });
+  }
+  if (!allowGuest(ip)) {
+    return res.status(429).json({ error: '游客进入过于频繁，请稍后再试' });
+  }
+
+  const user = getUserByUsername(config.guestUsername);
+  if (!user) return res.status(503).json({ error: '游客账号未初始化，请稍后重试' });
+  if (user.status !== 'active') {
+    return res.status(403).json({ error: '游客访问已被管理员停用' });
+  }
+  if (user.locked_until && user.locked_until > nowSeconds()) {
+    return res.status(423).json({ error: '游客访问暂时不可用' });
+  }
+
+  const token = generateToken();
+  const ttl = config.guestSessionTtlSeconds;
+  createSession({
+    tokenHash: hashToken(token),
+    userId: user.id,
+    ip,
+    userAgent: String(req.headers['user-agent'] || '').slice(0, 255),
+    expiresAt: nowSeconds() + ttl,
+  });
+  setSessionCookie(res, token, ttl);
+  writeAudit({ userId: user.id, username: user.username, action: 'auth.guest', ip, result: 'success' });
+  purgeExpiredSessions();
+
+  const { roles, permissions } = getRolesAndPermissions(user.id);
+  res.json({
+    ok: true,
+    ttl,
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      displayName: user.display_name || '游客',
+      avatarColor: user.avatar_color,
+      roles,
+      permissions,
+      isGuest: true,
+    },
+  });
+});
+
 router.post('/logout', (req, res) => {
   const token = req.cookies?.wb_session;
   if (token) revokeSession(hashToken(token));
@@ -96,6 +165,9 @@ router.get('/me', requireAuth, (req, res) => {
 });
 
 router.post('/password', requireAuth, (req, res) => {
+  if (req.user?.isGuest) {
+    return res.status(403).json({ error: '游客账号不支持修改密码' });
+  }
   const oldPassword = String(req.body?.oldPassword || '');
   const newPassword = String(req.body?.newPassword || '');
   const user = getUserByUsername(req.user.username);

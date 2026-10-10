@@ -76,6 +76,15 @@ export function SettingsPage() {
       </div>
 
       <div className="grid cols-2">
+        {user?.isGuest ? (
+          <div className="card">
+            <div style={{ fontWeight: 500, marginBottom: 8 }}>游客模式</div>
+            <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+              游客账号没有密码，也无需登录，因此不存在修改密码这一项。
+              需要使用完整功能时，请退出游客模式后用正式账号登录。
+            </p>
+          </div>
+        ) : (
         <div className="card">
           <div style={{ fontWeight: 500, marginBottom: 12 }}>修改密码</div>
           {message && <div className={`alert ${message.type === 'ok' ? 'ok' : 'error'}`}>{message.text}</div>}
@@ -98,6 +107,7 @@ export function SettingsPage() {
             </button>
           </form>
         </div>
+        )}
 
         <div className="card">
           <div style={{ fontWeight: 500, marginBottom: 12 }}>账号信息</div>

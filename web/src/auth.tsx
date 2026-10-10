@@ -7,6 +7,7 @@ interface AuthState {
   user: User | null;
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
+  loginAsGuest: () => Promise<void>;
   logout: () => Promise<void>;
   can: (permission: string) => boolean;
   refresh: () => Promise<void>;
@@ -37,6 +38,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!res.ok) throw new Error('登录失败');
   }, [refresh]);
 
+  const loginAsGuest = useCallback(async () => {
+    await api.guestLogin();
+    await refresh();
+  }, [refresh]);
+
   const logout = useCallback(async () => {
     try {
       await api.logout();
@@ -51,8 +57,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<AuthState>(
-    () => ({ user, loading, login, logout, can, refresh }),
-    [user, loading, login, logout, can, refresh]
+    () => ({ user, loading, login, loginAsGuest, logout, can, refresh }),
+    [user, loading, login, loginAsGuest, logout, can, refresh]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

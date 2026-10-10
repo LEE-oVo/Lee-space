@@ -28,6 +28,7 @@ export function resolveUser(req) {
     avatarColor: user.avatar_color,
     roles,
     permissions,
+    isGuest: roles.includes('guest'),
     lastLoginAt: user.last_login_at,
     lastLoginIp: user.last_login_ip,
   };
@@ -60,6 +61,13 @@ export function requirePermission(code) {
 
 export function hasPermission(user, code) {
   return Boolean(user && Array.isArray(user.permissions) && user.permissions.includes(code));
+}
+
+// 游客护栏：用于那些「登录即可访问」但不应暴露给游客的接口
+export function denyGuest(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: '未登录' });
+  if (req.user.isGuest) return res.status(403).json({ error: '游客不可访问该功能' });
+  next();
 }
 
 export function clientIp(req) {

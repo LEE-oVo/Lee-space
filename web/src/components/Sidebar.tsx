@@ -82,8 +82,16 @@ export function Sidebar({ collapsed, onToggle }: Props) {
             </div>
             {!collapsed && (
               <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {user.displayName}
+                <div className="row" style={{ gap: 6, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 13, fontWeight: 500,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {user.displayName}
+                  </div>
+                  {user.isGuest && <span className="pill guest-tag">游客</span>}
                 </div>
                 <div className="faint" style={{ fontSize: 11 }}>
                   {user.roles.join(' / ') || '无角色'}
@@ -92,14 +100,23 @@ export function Sidebar({ collapsed, onToggle }: Props) {
             )}
           </div>
         )}
+        {user?.isGuest && !collapsed && (
+          <div className="faint" style={{ fontSize: 11, padding: '0 6px 8px', lineHeight: 1.5 }}>
+            游客模式：不能启停服务，也看不到系统资源与管理功能
+          </div>
+        )}
         <div className="row" style={{ gap: 6 }}>
           <button className="btn ghost sm" onClick={onToggle} title={collapsed ? '展开菜单' : '收起菜单'} style={{ flex: 1 }}>
             <Icon name={collapsed ? 'expand' : 'collapse'} size={16} />
             {!collapsed && '收起'}
           </button>
           {!collapsed && (
-            <button className="btn ghost sm" onClick={() => void logout()} title="退出登录">
-              <Icon name="logout" size={16} />
+            <button
+              className="btn ghost sm"
+              onClick={() => void logout()}
+              title={user?.isGuest ? '结束游客浏览，回到登录页' : '退出登录'}
+            >
+              <Icon name={user?.isGuest ? 'login' : 'logout'} size={16} />
             </button>
           )}
         </div>

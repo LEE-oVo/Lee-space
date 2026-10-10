@@ -26,3 +26,16 @@ export function formatMb(mb: number): string {
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
   return `${Math.round(mb)} MB`;
 }
+
+export function formatBps(bytesPerSecond: number): string {
+  const bps = Math.max(0, bytesPerSecond || 0);
+  if (bps >= 1024 ** 3) return `${(bps / 1024 ** 3).toFixed(2)} GB/s`;
+  if (bps >= 1024 ** 2) return `${(bps / 1024 ** 2).toFixed(2)} MB/s`;
+  if (bps >= 1024) return `${(bps / 1024).toFixed(1)} KB/s`;
+  return `${Math.round(bps)} B/s`;
+}
+
+export function formatClock(ts?: number | null): string {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false });
+}

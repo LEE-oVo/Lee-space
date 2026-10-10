@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { config } from '../config.js';
+import { hashPassword } from '../lib/password.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
@@ -39,7 +41,9 @@ const PERMISSIONS = [
 const ROLES = [
   ['admin', '管理员', '拥有全部权限', 1, PERMISSIONS.map((p) => p[0])],
   ['operator', '操作者', '可使用 DSH 并查看系统状态', 1, ['overview:view', 'dsh:access', 'dsh:start', 'dsh:stop', 'system:view']],
-  ['viewer', '访客', '只读，仅能查看概览', 1, ['overview:view']],
+  ['viewer', '只读用户', '只读，仅能查看概览', 1, ['overview:view']],
+  // 游客：免登录进入，不能启停 DSH、不能看系统资源与任何管理功能
+  ['guest', '游客', '免登录，仅可查看概览并进入已启动的 DSH', 1, ['overview:view', 'dsh:access']],
 ];
 
 export function seedBaseline(database) {
@@ -58,6 +62,15 @@ export function seedBaseline(database) {
      ON CONFLICT(role_id, permission_id) DO NOTHING`
   );
 
+  const insertUser = database.prepare(
+    `INSERT INTO users (username, email, password_hash, display_name, avatar_color, status)
+     VALUES (?, ?, ?, ?, ?, 'active')`
+  );
+  const linkUserRole = database.prepare(
+    `INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)
+     ON CONFLICT(user_id, role_id) DO NOTHING`
+  );
+
   const run = database.transaction(() => {
     for (const [code, module, desc] of PERMISSIONS) insertPerm.run(code, module, desc);
     for (const [code, name, desc, isSystem, perms] of ROLES) {
@@ -67,6 +80,23 @@ export function seedBaseline(database) {
         const pid = permId.get(p);
         if (pid) link.run(rid, pid.id);
       }
+    }
+
+    // 游客账号：密码设为一次性随机串，任何人都无法用密码登录，只能走 /auth/guest
+    const existing = database.prepare(`SELECT id FROM users WHERE username = ?`).get(config.guestUsername);
+    if (!existing) {
+      const id = insertUser.run(
+        config.guestUsername,
+        null,
+        hashPassword(randomBytes(32).toString('hex')),
+        '游客',
+        '#888780'
+      ).lastInsertRowid;
+      const guestRole = roleId.get('guest');
+      if (guestRole) linkUserRole.run(id, guestRole.id);
+    } else {
+      const guestRole = roleId.get('guest');
+      if (guestRole) linkUserRole.run(existing.id, guestRole.id);
     }
   });
   run();

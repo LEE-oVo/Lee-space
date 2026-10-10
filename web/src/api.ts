@@ -33,6 +33,7 @@ export const api = {
     }),
   logout: () => request<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
   me: () => request<{ user: User }>('/auth/me'),
+  guestLogin: () => request<{ ok: boolean; ttl: number; user: User }>('/auth/guest', { method: 'POST' }),
   changePassword: (oldPassword: string, newPassword: string) =>
     request<{ ok: boolean }>('/auth/password', {
       method: 'POST',

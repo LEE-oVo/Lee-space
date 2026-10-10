@@ -589,6 +589,160 @@ table.data tbody tr:hover {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ---------- 登录页：游客入口 ---------- */
+.guest-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 12px;
+  color: var(--c-text-faint);
+  font-size: 12px;
+}
+.guest-divider::before,
+.guest-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--c-border);
+}
+.guest-btn {
+  border-color: var(--c-border-strong);
+  font-weight: 500;
+}
+.guest-note {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--c-text-faint);
+  text-align: center;
+}
+
+.pill.guest-tag {
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--c-warning);
+  border-color: color-mix(in srgb, var(--c-warning) 45%, transparent);
+}
+
+/* ---------- 概览实时看板 ---------- */
+.dash-head .dash-updated {
+  font-size: 12px;
+  margin-top: 10px;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.seg-item {
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  background: transparent;
+  border: none;
+  color: var(--c-text-dim);
+  cursor: pointer;
+  transition: background-color 0.18s var(--ease), color 0.18s var(--ease);
+}
+.seg-item + .seg-item {
+  border-left: 1px solid var(--c-border);
+}
+.seg-item:hover {
+  background: var(--c-surface-2);
+}
+.seg-item.active {
+  background: var(--c-accent);
+  color: var(--c-accent-contrast);
+  font-weight: 500;
+}
+
+.dash-gauges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.gauge {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  padding: 16px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.gauge-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.gauge-center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  line-height: 1.2;
+}
+.gauge-value {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.gauge-unit {
+  font-size: 11px;
+  color: var(--c-text-faint);
+}
+.gauge-sub {
+  font-size: 12px;
+  color: var(--c-text-dim);
+  text-align: center;
+}
+
+.dash-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--c-text-faint);
+  margin-top: 6px;
+}
+
+.dash-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+}
+.dash-metric-label {
+  font-size: 12px;
+  color: var(--c-text-dim);
+}
+.dash-metric-value {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--c-surface-2);
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--c-accent), var(--c-accent-2));
+  transition: width 0.6s var(--ease);
+}
+
+.sparkline {
+  overflow: visible;
+}
+
 @media (max-width: 820px) {
   .sidebar { position: absolute; z-index: 30; height: 100%; box-shadow: 0 0 40px var(--c-shadow); }
   .content { padding: 16px; }

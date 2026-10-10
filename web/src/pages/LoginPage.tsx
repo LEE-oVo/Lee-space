@@ -4,11 +4,12 @@ import { useAuth } from '../auth';
 import { Icon } from '../components/Icon';
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, loginAsGuest } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [guestBusy, setGuestBusy] = useState(false);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -20,6 +21,18 @@ export function LoginPage() {
       setError(err instanceof Error ? err.message : '登录失败');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function enterAsGuest() {
+    setError('');
+    setGuestBusy(true);
+    try {
+      await loginAsGuest();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '游客进入失败');
+    } finally {
+      setGuestBusy(false);
     }
   }
 
@@ -67,7 +80,24 @@ export function LoginPage() {
           {busy ? '登录中…' : '登录'}
         </button>
 
-        <div className="faint" style={{ fontSize: 11, marginTop: 16, textAlign: 'center' }}>
+        <div className="guest-divider"><span>或</span></div>
+
+        <button
+          className="btn guest-btn"
+          style={{ width: '100%', justifyContent: 'center' }}
+          onClick={() => void enterAsGuest()}
+          disabled={guestBusy || busy}
+        >
+          {guestBusy ? <span className="spinner" /> : <Icon name="external" size={16} />}
+          {guestBusy ? '进入中…' : '以游客身份进入'}
+        </button>
+
+        <div className="guest-note">
+          游客无需密码，可查看概览并在 DSH 已启动时进入使用；<br />
+          不能启停服务，也看不到系统资源与任何管理功能。
+        </div>
+
+        <div className="faint" style={{ fontSize: 11, marginTop: 14, textAlign: 'center' }}>
           连续失败 5 次将锁定 15 分钟
         </div>
       </form>

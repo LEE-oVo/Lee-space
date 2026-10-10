@@ -4,7 +4,7 @@ import {
   createUser, updateProfile, setUserStatus, setUserRoles, updatePassword,
   writeAudit, listAudit, getRolesAndPermissions,
 } from '../db/repo.js';
-import { requirePermission, clientIp, requireAuth } from '../middleware/auth.js';
+import { requirePermission, clientIp, requireAuth, denyGuest } from '../middleware/auth.js';
 import { hashPassword, passwordIssues } from '../lib/password.js';
 import { revokeAllSessions } from '../db/repo.js';
 
@@ -94,7 +94,7 @@ router.delete('/users/:id', requirePermission('user:manage'), (req, res) => {
   res.json({ ok: true });
 });
 
-router.get('/roles', requireAuth, (req, res) => {
+router.get('/roles', requireAuth, denyGuest, (req, res) => {
   res.json({ roles: listRoles(), permissions: listPermissions() });
 });
 

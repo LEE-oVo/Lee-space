@@ -38,6 +38,14 @@ export const config = {
   dshLog: process.env.DSH_LOG || '/home/dsh/dsh.log',
   dshPort: Number(process.env.DSH_PORT || 3080),
   publicPath: process.env.PUBLIC_DSH_PATH || '/dsh/',
+  // 游客免登录：关闭后登录页不再显示入口，接口也直接拒绝
+  guestEnabled: String(process.env.GUEST_ENABLED || 'true') === 'true',
+  guestUsername: process.env.GUEST_USERNAME || 'guest',
+  // 游客会话比正式登录短很多，避免长期占用
+  guestSessionTtlSeconds: Number(process.env.GUEST_SESSION_TTL || 60 * 60 * 12),
+  // 同一 IP 在窗口期内最多可领取的游客会话数
+  guestRateLimit: Number(process.env.GUEST_RATE_LIMIT || 30),
+  guestRateWindowSeconds: Number(process.env.GUEST_RATE_WINDOW || 300),
   isProd: process.env.NODE_ENV !== 'development',
 };
 
