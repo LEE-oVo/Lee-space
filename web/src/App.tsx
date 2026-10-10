@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Sidebar } from './components/Sidebar';
 import { ThemePicker } from './components/ThemePicker';
 import { LoginPage } from './pages/LoginPage';
@@ -50,15 +51,17 @@ export function App() {
           <ThemePicker />
         </header>
         <main className="content">
-          <Routes>
+          <ErrorBoundary>
+            <Routes>
             <Route path="/" element={<OverviewPage />} />
             <Route path="/harness" element={<DshPage />} />
             <Route path="/system" element={<SystemPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/audit" element={<AuditPage />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </ErrorBoundary>
         </main>
       </div>
     </div>

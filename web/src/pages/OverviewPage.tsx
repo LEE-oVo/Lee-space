@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { Icon } from '../components/Icon';
-import { formatDuration } from '../lib/format';
+import { formatDuration, formatMb } from '../lib/format';
 import type { DshStatus, SystemStats } from '../types';
 
 export function OverviewPage() {
