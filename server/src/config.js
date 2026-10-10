@@ -46,6 +46,10 @@ export const config = {
   // 同一 IP 在窗口期内最多可领取的游客会话数
   guestRateLimit: Number(process.env.GUEST_RATE_LIMIT || 30),
   guestRateWindowSeconds: Number(process.env.GUEST_RATE_WINDOW || 300),
+  // 首页天气：默认城市（服务器所在地，可在 .env 改成自己常驻城市）
+  weatherCity: process.env.WEATHER_CITY || '深圳',
+  weatherLat: Number(process.env.WEATHER_LAT || 22.54554),
+  weatherLon: Number(process.env.WEATHER_LON || 114.0683),
   isProd: process.env.NODE_ENV !== 'development',
 };
 

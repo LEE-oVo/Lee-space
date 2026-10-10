@@ -14,7 +14,8 @@ const NAV: Array<{ section: string; items: NavEntry[] }> = [
   {
     section: '工作区',
     items: [
-      { to: '/', label: '概览', icon: 'overview', permission: 'overview:view' },
+      // 首页对所有登录角色开放（含游客），因此不挂权限
+      { to: '/', label: '首页', icon: 'home' },
       { to: '/harness', label: 'DeepSeek Harness', icon: 'spark', permission: 'dsh:access' },
       { to: '/system', label: '系统状态', icon: 'cpu', permission: 'system:view' },
     ],

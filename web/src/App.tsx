@@ -13,7 +13,7 @@ import { AuditPage } from './pages/AuditPage';
 import { SettingsPage } from './pages/SettingsPage';
 
 const TITLES: Record<string, string> = {
-  '/': '概览',
+  '/': '首页',
   '/harness': 'DeepSeek Harness',
   '/system': '系统状态',
   '/users': '用户与角色',

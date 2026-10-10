@@ -1,5 +1,5 @@
 import type {
-  AuditLog, DshStatus, PermissionRecord, RoleRecord, SystemStats, User, WorkbenchUser,
+  AuditLog, DshStatus, PermissionRecord, RoleRecord, SystemStats, User, WeatherData, WorkbenchUser,
 } from './types';
 
 // 注意：/api 前缀已整段让给 DeepSeek Harness，工作台自身接口统一走 /wb-api
@@ -46,6 +46,10 @@ export const api = {
   dshLog: (lines = 120) => request<{ log: string }>(`/dsh/log?lines=${lines}`),
 
   systemStats: () => request<SystemStats>('/system/stats'),
+
+  // q 为空时返回 .env 里配置的默认城市
+  weather: (q?: string) =>
+    request<WeatherData>(q ? `/weather?q=${encodeURIComponent(q)}` : '/weather'),
 
   listUsers: () => request<{ users: WorkbenchUser[] }>('/admin/users'),
   createUser: (payload: Record<string, unknown>) =>

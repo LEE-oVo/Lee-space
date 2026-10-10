@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { Icon } from '../components/Icon';
 
 export function LoginPage() {
   const { login, loginAsGuest } = useAuth();
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -17,6 +19,7 @@ export function LoginPage() {
     setBusy(true);
     try {
       await login(username.trim(), password);
+      navigate('/', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败');
     } finally {
@@ -29,6 +32,7 @@ export function LoginPage() {
     setGuestBusy(true);
     try {
       await loginAsGuest();
+      navigate('/', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : '游客进入失败');
     } finally {
@@ -93,7 +97,7 @@ export function LoginPage() {
         </button>
 
         <div className="guest-note">
-          游客无需密码，可查看概览并在 DSH 已启动时进入使用；<br />
+          游客无需密码，可浏览首页并在 DSH 已启动时进入使用；<br />
           不能启停服务，也看不到系统资源与任何管理功能。
         </div>
 

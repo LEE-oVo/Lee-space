@@ -743,6 +743,223 @@ table.data tbody tr:hover {
   overflow: visible;
 }
 
+/* ---------- 首页：时钟 / 日历 / 天气 ---------- */
+.home-hero {
+  margin-bottom: 14px;
+  background:
+    radial-gradient(720px 240px at 8% -30%, color-mix(in srgb, var(--c-accent) 16%, transparent), transparent),
+    radial-gradient(620px 220px at 100% 130%, color-mix(in srgb, var(--c-accent-2) 16%, transparent), transparent),
+    var(--c-surface);
+}
+.home-greet {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.home-date {
+  font-size: 13px;
+  color: var(--c-text-dim);
+  margin-top: 3px;
+}
+.home-lunar {
+  font-size: 12px;
+  margin-top: 1px;
+}
+.home-clock {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-variant-numeric: tabular-nums;
+}
+.home-time {
+  font-size: 52px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, var(--c-accent), var(--c-accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.home-sec {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--c-text-faint);
+  min-width: 24px;
+}
+.home-progress {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px 22px;
+  margin-top: 18px;
+}
+.home-progress-item .progress {
+  margin-top: 5px;
+}
+
+/* 日历 */
+.cal-card {
+  display: flex;
+  flex-direction: column;
+}
+.cal-month {
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 92px;
+  text-align: center;
+}
+.cal-nav {
+  padding: 4px 6px;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+.cal-weekday {
+  text-align: center;
+  font-size: 11px;
+  color: var(--c-text-faint);
+  padding-bottom: 4px;
+}
+.cal-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 5px 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--c-text);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color 0.16s var(--ease), border-color 0.16s var(--ease);
+}
+.cal-cell:hover {
+  background: var(--c-surface-2);
+}
+.cal-day {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+.cal-lunar {
+  font-size: 10px;
+  color: var(--c-text-faint);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.cal-cell.out {
+  color: var(--c-text-faint);
+  opacity: 0.5;
+}
+.cal-cell.weekend .cal-day {
+  color: var(--c-accent);
+}
+.cal-cell.selected {
+  border-color: var(--c-border-strong);
+  background: var(--c-surface-2);
+}
+.cal-cell.today {
+  background: linear-gradient(135deg, var(--c-accent), var(--c-accent-2));
+  color: var(--c-accent-contrast);
+}
+.cal-cell.today .cal-lunar,
+.cal-cell.today .cal-day {
+  color: inherit;
+}
+.cal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--c-border);
+  font-size: 13px;
+}
+
+/* 天气 */
+.wx-card {
+  display: flex;
+  flex-direction: column;
+}
+.wx-now {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 0 4px;
+}
+.wx-icon {
+  color: var(--c-accent);
+  flex: 0 0 auto;
+}
+.wx-temp {
+  font-size: 38px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+.wx-unit {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--c-text-dim);
+  margin-left: 3px;
+}
+.wx-desc {
+  font-size: 13px;
+  color: var(--c-text-dim);
+  margin-top: 4px;
+}
+.wx-meta {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--c-text-dim);
+}
+.wx-forecast {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--c-border);
+}
+.wx-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--c-surface-2);
+}
+.wx-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 0;
+  font-size: 13px;
+  color: var(--c-text-dim);
+}
+.wx-switch {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 14px;
+}
+.wx-switch .input {
+  flex: 1;
+}
+.wx-updated {
+  font-size: 11px;
+  margin-top: 8px;
+}
+
 @media (max-width: 820px) {
   .sidebar { position: absolute; z-index: 30; height: 100%; box-shadow: 0 0 40px var(--c-shadow); }
   .content { padding: 16px; }

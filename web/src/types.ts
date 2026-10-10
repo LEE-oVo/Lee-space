@@ -46,6 +46,41 @@ export interface SystemStats {
   ts: number;
 }
 
+export interface WeatherPlace {
+  name: string;
+  admin1: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+  timezone: string;
+}
+
+export interface WeatherCurrent {
+  time: string;
+  temperature: number;
+  apparent: number;
+  humidity: number;
+  wind: number;
+  code: number;
+  isDay: boolean;
+}
+
+export interface WeatherDay {
+  date: string;
+  code: number;
+  max: number;
+  min: number;
+}
+
+export interface WeatherData {
+  ok: boolean;
+  place?: WeatherPlace;
+  current?: WeatherCurrent;
+  daily?: WeatherDay[];
+  fetchedAt?: number;
+  error?: string;
+}
+
 export interface AuditLog {
   id: number;
   user_id: number | null;
