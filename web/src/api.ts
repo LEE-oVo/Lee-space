@@ -1,5 +1,6 @@
 import type {
-  AuditLog, DshStatus, PermissionRecord, RoleRecord, SystemStats, User, WeatherData, WorkbenchUser,
+  AuditLog, DshStatus, FundAdvice, FundHolding, FundOverview, PermissionRecord,
+  RoleRecord, SystemStats, User, WeatherData, WorkbenchUser,
 } from './types';
 
 // 注意：/api 前缀已整段让给 DeepSeek Harness，工作台自身接口统一走 /wb-api
@@ -50,6 +51,16 @@ export const api = {
   // q 为空时返回 .env 里配置的默认城市
   weather: (q?: string) =>
     request<WeatherData>(q ? `/weather?q=${encodeURIComponent(q)}` : '/weather'),
+
+  // 基金行情：只做展示，判断由定时任务里的大模型产出后写入
+  funds: () => request<FundOverview>('/funds'),
+  fundHistory: (code: string, limit = 10) =>
+    request<{ history: FundAdvice[] }>(`/funds/history?code=${encodeURIComponent(code)}&limit=${limit}`),
+  createFundHolding: (payload: Record<string, unknown>) =>
+    request<{ ok: boolean; holding: FundHolding }>('/funds/holdings', { method: 'POST', body: JSON.stringify(payload) }),
+  updateFundHolding: (id: number, payload: Record<string, unknown>) =>
+    request<{ ok: boolean; holding: FundHolding }>(`/funds/holdings/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteFundHolding: (id: number) => request<{ ok: boolean }>(`/funds/holdings/${id}`, { method: 'DELETE' }),
 
   listUsers: () => request<{ users: WorkbenchUser[] }>('/admin/users'),
   createUser: (payload: Record<string, unknown>) =>

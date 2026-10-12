@@ -116,3 +116,58 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_by INTEGER,
   updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
 );
+
+-- ---------- 基金行情分析 ----------
+-- 说明：本模块只做「存储 + 展示」，行情获取与判断由 WorkBuddy 定时任务调用大模型完成，
+--       结果通过 POST /wb-api/funds/ingest 写入。
+
+-- 持仓基础信息（用户在工作台页面维护）
+CREATE TABLE IF NOT EXISTS fund_holdings (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  code       TEXT    NOT NULL UNIQUE,
+  name       TEXT    NOT NULL,
+  category   TEXT,
+  cost       REAL,
+  shares     REAL,
+  amount     REAL,
+  note       TEXT,
+  status     TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+  updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+);
+CREATE INDEX IF NOT EXISTS idx_fund_holdings_status ON fund_holdings(status);
+
+-- 每日操作建议（定时任务写入，同一基金同一交易日覆盖）
+CREATE TABLE IF NOT EXISTS fund_advice (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  code         TEXT    NOT NULL,
+  trade_date   TEXT    NOT NULL,
+  action       TEXT    NOT NULL CHECK (action IN ('buy', 'add', 'hold', 'reduce', 'sell')),
+  confidence   TEXT    CHECK (confidence IN ('low', 'medium', 'high')),
+  nav          REAL,
+  nav_date     TEXT,
+  estimate     REAL,
+  estimate_pct REAL,
+  nav_pct      REAL,
+  summary      TEXT,
+  reason       TEXT,
+  risks        TEXT,
+  sources      TEXT,
+  stale        INTEGER NOT NULL DEFAULT 0,
+  model        TEXT,
+  created_at   INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+  updated_at   INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fund_advice_unique ON fund_advice(code, trade_date);
+CREATE INDEX IF NOT EXISTS idx_fund_advice_date ON fund_advice(trade_date);
+
+-- 每日整体结论（市场简述 + 生成来源）
+CREATE TABLE IF NOT EXISTS fund_daily (
+  trade_date TEXT PRIMARY KEY,
+  summary    TEXT,
+  market     TEXT,
+  model      TEXT,
+  created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+  updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+);

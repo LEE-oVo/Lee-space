@@ -981,6 +981,157 @@ table.data tbody tr:hover {
   margin-top: 8px;
 }
 
+/* ---------- 基金行情 ---------- */
+.up { color: var(--c-danger); }
+.down { color: var(--c-success); }
+
+.fund-head { margin-bottom: 14px; }
+.fund-market {
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--c-text-dim);
+  margin-top: 10px;
+  white-space: pre-wrap;
+}
+.fund-empty {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--c-text-dim);
+}
+
+.fund-action.act-buy {
+  color: var(--c-danger);
+  border-color: color-mix(in srgb, var(--c-danger) 45%, transparent);
+}
+.fund-action.act-sell {
+  color: var(--c-success);
+  border-color: color-mix(in srgb, var(--c-success) 45%, transparent);
+}
+.fund-action.act-hold {
+  color: var(--c-text-dim);
+}
+.pill.sm.act-buy { color: var(--c-danger); }
+.pill.sm.act-sell { color: var(--c-success); }
+
+.fund-card {
+  display: flex;
+  flex-direction: column;
+}
+.fund-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+.fund-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--c-surface-2);
+}
+.fund-metric-label {
+  font-size: 11px;
+  color: var(--c-text-faint);
+}
+.fund-metric-value {
+  font-size: 15px;
+  font-weight: 500;
+}
+.fund-sub {
+  font-size: 11px;
+  font-weight: 400;
+}
+.fund-stale {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--c-warning);
+  border: 1px solid color-mix(in srgb, var(--c-warning) 40%, transparent);
+  background: color-mix(in srgb, var(--c-warning) 10%, transparent);
+}
+.fund-summary {
+  font-size: 13px;
+  font-weight: 500;
+  margin-top: 12px;
+}
+.fund-reason {
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--c-text-dim);
+  margin-top: 6px;
+  white-space: pre-wrap;
+}
+.fund-risks {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--c-text-dim);
+}
+.fund-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 10px;
+}
+.fund-sources a {
+  font-size: 11px;
+  color: var(--c-accent);
+  text-decoration: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fund-sources a:hover {
+  text-decoration: underline;
+}
+.fund-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 12px;
+}
+.fund-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--c-border);
+}
+.fund-history-row {
+  display: grid;
+  grid-template-columns: 84px auto 1fr;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.fund-form {
+  border-top: 1px solid var(--c-border);
+  padding-top: 14px;
+  margin-bottom: 14px;
+  animation: page-in 0.24s var(--ease);
+}
+.fund-disclaimer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--c-text-faint);
+}
+
 @media (max-width: 820px) {
   /* 侧边栏改为抽屉：默认移出屏幕，不再遮挡内容 */
   .sidebar,
@@ -1064,6 +1215,10 @@ table.data tbody tr:hover {
   }
   .cal-lunar { font-size: 9px; }
   .cal-cell { padding: 4px 1px 3px; }
+
+  .fund-metrics { grid-template-columns: repeat(2, 1fr); }
+  .fund-history-row { grid-template-columns: 76px auto; }
+  .fund-history-row > span:last-child { grid-column: 1 / -1; }
 
   .login-wrap { padding: 16px; }
   .login-card { padding: 22px 18px; }

@@ -39,6 +39,12 @@ const paths: Record<string, string> = {
   droplet: 'M12 3.2s6 6.3 6 10.3a6 6 0 0 1-12 0c0-4 6-10.3 6-10.3',
   menu: 'M4 6.5h16M4 12h16M4 17.5h16',
   close: 'M6 6l12 12M18 6L6 18',
+  plus: 'M12 5v14M5 12h14',
+  minus: 'M5 12h14',
+  trash: 'M4 7h16M9 7V5h6v2M6.5 7l1 13h9l1-13M10 11v6M14 11v6',
+  edit: 'M4 20h4L20 8l-4-4L4 16v4M14.5 5.5l4 4',
+  chart: 'M3 20.5h18M6.5 16.5v-5M11.5 16.5V6.5M16.5 16.5v-8',
+  alert: 'M12 3.5l8.5 15H3.5zM12 9.5v4M12 16.8h.01',
 };
 
 interface IconProps {

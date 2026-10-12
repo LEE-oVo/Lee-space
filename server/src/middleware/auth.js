@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { config, nowSeconds } from '../config.js';
 import { findSession, getUserById, getRolesAndPermissions, touchSession } from '../db/repo.js';
 import { hashToken, SESSION_COOKIE } from '../lib/session.js';
@@ -67,6 +68,24 @@ export function hasPermission(user, code) {
 export function denyGuest(req, res, next) {
   if (!req.user) return res.status(401).json({ error: '未登录' });
   if (req.user.isGuest) return res.status(403).json({ error: '游客不可访问该功能' });
+  next();
+}
+
+// 基金建议写入：使用独立令牌而不是登录会话。
+// 令牌只授予「写建议 + 读持仓」，即使泄露也无法操作服务器或访问其他接口。
+export function requireFundIngest(req, res, next) {
+  if (!config.fundIngestToken) {
+    return res.status(503).json({ error: '服务端未配置 FUND_INGEST_TOKEN，写入接口已关闭' });
+  }
+  const header = String(req.headers.authorization || '');
+  if (!header.startsWith('Bearer ')) {
+    return res.status(401).json({ error: '缺少 Bearer 令牌' });
+  }
+  const given = Buffer.from(header.slice(7).trim());
+  const expect = Buffer.from(config.fundIngestToken);
+  if (given.length !== expect.length || !timingSafeEqual(given, expect)) {
+    return res.status(401).json({ error: '令牌无效' });
+  }
   next();
 }
 

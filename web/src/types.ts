@@ -81,6 +81,60 @@ export interface WeatherData {
   error?: string;
 }
 
+export type FundAction = 'buy' | 'add' | 'hold' | 'reduce' | 'sell';
+
+export interface FundHolding {
+  id: number;
+  code: string;
+  name: string;
+  category: string;
+  cost: number | null;
+  shares: number | null;
+  amount: number | null;
+  note: string;
+  status: string;
+  sortOrder: number;
+  updatedAt: number;
+}
+
+export interface FundSource {
+  title: string;
+  url: string;
+}
+
+export interface FundAdvice {
+  code: string;
+  tradeDate: string;
+  action: FundAction;
+  confidence: string | null;
+  nav: number | null;
+  navDate: string | null;
+  estimate: number | null;
+  estimatePct: number | null;
+  navPct: number | null;
+  summary: string;
+  reason: string;
+  risks: string[];
+  sources: FundSource[];
+  stale: boolean;
+  model: string | null;
+  updatedAt: number;
+}
+
+export interface FundDaily {
+  tradeDate: string;
+  summary: string;
+  market: string;
+  model: string | null;
+  updatedAt: number;
+}
+
+export interface FundOverview {
+  daily: FundDaily | null;
+  holdings: FundHolding[];
+  advice: FundAdvice[];
+}
+
 export interface AuditLog {
   id: number;
   user_id: number | null;

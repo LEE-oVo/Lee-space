@@ -193,6 +193,52 @@ sudo vi /opt/workbench/dsh.env     # 或 sudo nano
 
 验证方式：`mobile-check.mjs`（工作区根目录，不入库）用本机 Edge headless + CDP 模拟 390×844 视口，逐页检查横向溢出、抽屉开合与桌面回归，并截图。
 
+## 基金行情分析
+
+分工：**工作台只做存储与展示，行情抓取和买卖判断全部由 WorkBuddy 定时任务里的大模型完成。**
+
+```
+WorkBuddy 定时任务（工作日 14:30）
+  ├─ GET  /wb-api/funds/holdings   读取持仓清单（令牌鉴权）
+  ├─ 抓行情：天天基金估值接口 / 联网搜索消息面
+  ├─ 大模型综合判断 → 结构化建议
+  └─ POST /wb-api/funds/ingest     写回工作台（令牌鉴权）
+                                        │
+                                   SQLite 存储
+                                        │
+                              GET /wb-api/funds → 网页展示
+```
+
+新增基金只需在页面「持仓管理」里加一行，定时任务会自动读取，**不用改任务配置**。
+
+数据落三张表：`fund_holdings`（持仓）、`fund_advice`（每日建议，`UNIQUE(code, trade_date)` 覆盖式写入）、`fund_daily`（当日整体结论）。
+
+接口：
+
+| 接口 | 鉴权 | 用途 |
+|---|---|---|
+| `GET /wb-api/funds` | `fund:view` | 页面数据（持仓 + 最新建议 + 当日结论） |
+| `GET /wb-api/funds/history?code=` | `fund:view` | 单只基金的建议历史 |
+| `POST/PATCH/DELETE /wb-api/funds/holdings` | `fund:manage` | 持仓维护 |
+| `GET /wb-api/funds/holdings` | 写入令牌 | 供定时任务读取持仓 |
+| `POST /wb-api/funds/ingest` | 写入令牌 | 写入建议，强校验 |
+
+写入令牌与会话体系完全隔离：
+
+```bash
+cd /opt/workbench/server && sudo node src/scripts/rotate-fund-token.js   # 生成/轮换
+sudo systemctl restart workbench
+```
+
+- 令牌存 `.env` 的 `FUND_INGEST_TOKEN`（600，**不入库**），留空则接口直接 503 关闭
+- 只授予「写建议 + 读持仓」，即使泄露也无法操作服务器或访问其他接口
+- 用 `timingSafeEqual` 做常量时间比较，避免时序侧信道
+- 轮换后需同步更新定时任务里的 Authorization 头
+
+写入侧强校验：日期、代码、action（只能是 `buy/add/hold/reduce/sell`）、confidence 任一不合法就**整批拒绝并返回明细**，脏数据不会入库污染展示。
+
+页面（`fund:view`，默认 admin + operator，游客与只读角色无此权限）：当日整体结论、每只基金的净值/估值/持仓盈亏/建议徽章/理由/风险/来源、建议历史回看、持仓管理表格。数据缺失时展示空态提示而非报错，页面底部常驻免责声明。
+
 ## 安全注意事项
 
 - `.env`、`dsh.env` 与 `data/*.db` 已加入 `.gitignore`，不会入库

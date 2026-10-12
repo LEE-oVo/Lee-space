@@ -18,6 +18,7 @@ const NAV: Array<{ section: string; items: NavEntry[] }> = [
       { to: '/', label: '首页', icon: 'home' },
       { to: '/harness', label: 'DeepSeek Harness', icon: 'spark', permission: 'dsh:access' },
       { to: '/system', label: '系统状态', icon: 'cpu', permission: 'system:view' },
+      { to: '/funds', label: '基金行情', icon: 'chart', permission: 'fund:view' },
     ],
   },
   {
