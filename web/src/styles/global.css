@@ -74,8 +74,9 @@ body,
   }
 }
 
-/* 小屏才用到的菜单按钮与遮罩，默认不存在 */
-.topbar-menu,
+/* 小屏才用到的菜单按钮与遮罩，默认不存在。
+   注意：选择器要压过后面 .btn 的 display:inline-flex，所以用 .topbar 提高权重 */
+.topbar .topbar-menu,
 .sidebar-backdrop {
   display: none;
 }
@@ -1170,7 +1171,7 @@ table.data tbody tr:hover {
     to { opacity: 1; }
   }
 
-  .topbar-menu {
+  .topbar .topbar-menu {
     display: inline-flex;
     padding: 6px;
   }
