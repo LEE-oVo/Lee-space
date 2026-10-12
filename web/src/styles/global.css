@@ -1241,6 +1241,11 @@ table.data tbody tr:hover {
   background: var(--c-surface-2);
   border-radius: var(--radius-sm);
 }
+.nav-chart-empty.compact {
+  padding: 10px 8px;
+  font-size: 11px;
+  background: transparent;
+}
 
 @media (max-width: 820px) {
   /* 侧边栏改为抽屉：默认移出屏幕，不再遮挡内容 */

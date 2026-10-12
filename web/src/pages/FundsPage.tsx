@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { Icon } from '../components/Icon';
-import { Sparkline } from '../components/Sparkline';
+import { NavChart } from '../components/NavChart';
 import { FundDetailModal } from '../components/FundDetailModal';
 import { formatRelative } from '../lib/format';
 import type { FundAdvice, FundAction, FundHolding, FundNavPoint, FundOverview } from '../types';
@@ -66,7 +66,8 @@ export function FundsPage() {
       const codes = Array.from(
         new Set([...d.holdings.map((h) => h.code), ...d.advice.map((a) => a.code)])
       );
-      const results = await Promise.all(codes.map((c) => api.fundSeries(c, 40).catch(() => null)));
+      // 卡片只取近 20 个交易日，完整走势在详情弹窗里再拉
+      const results = await Promise.all(codes.map((c) => api.fundSeries(c, 20).catch(() => null)));
       const map: Record<string, FundNavPoint[]> = {};
       codes.forEach((c, i) => {
         const r = results[i];
@@ -113,7 +114,6 @@ export function FundsPage() {
     const price = advice?.estimate ?? advice?.nav ?? null;
     const profitPct = canDetail ? profit(holding?.cost ?? null, price) : null;
     const pts = series[code];
-    const values = pts ? pts.map((p) => p.nav) : [];
 
     return (
       <div className="card fund-card" key={code}>
@@ -165,15 +165,9 @@ export function FundsPage() {
 
         {advice?.summary && <div className="fund-oneline">{advice.summary}</div>}
 
-        {values.length > 1 && (
+        {pts && pts.length > 1 && (
           <div className="fund-spark">
-            <Sparkline
-              data={values}
-              min={Math.min(...values)}
-              max={Math.max(...values)}
-              height={38}
-              color={values[values.length - 1] >= values[0] ? 'var(--c-danger)' : 'var(--c-success)'}
-            />
+            <NavChart points={pts} compact />
           </div>
         )}
 

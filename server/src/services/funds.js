@@ -140,7 +140,7 @@ export function navSeries(code, limit = 60) {
   const db = getDb();
   const rows = db.prepare(
     `SELECT nav_date, nav FROM fund_nav WHERE code = ? ORDER BY nav_date DESC LIMIT ?`
-  ).all(code, Math.min(Math.max(Number(limit) || 60, 5), 365));
+  ).all(code, Math.min(Math.max(Number(limit) || 60, 5), 2000));
   return rows.reverse().map((r) => ({ date: r.nav_date, nav: r.nav }));
 }
 

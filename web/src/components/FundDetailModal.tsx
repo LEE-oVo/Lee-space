@@ -41,7 +41,7 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, onClos
     const load = async () => {
       try {
         const [s, h] = await Promise.all([
-          api.fundSeries(code, 90),
+          api.fundSeries(code, 1000),
           canDetail ? api.fundHistory(code, 10) : Promise.resolve({ history: [] as FundAdvice[] }),
         ]);
         if (!alive) return;
@@ -81,7 +81,15 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, onClos
       {error && <div className="alert error">{error}</div>}
 
       <div className="fund-detail-block">
-        <div style={{ fontWeight: 500, marginBottom: 8 }}>净值走势</div>
+        <div style={{ fontWeight: 500, marginBottom: 8 }}>
+          净值走势
+          {series && series.length > 1 && (
+            <span className="faint" style={{ fontWeight: 400, fontSize: 12 }}>
+              {' '}
+              · 全部 {series.length} 个交易日
+            </span>
+          )}
+        </div>
         {series === null ? (
           <div className="skeleton" style={{ height: 190 }} />
         ) : (

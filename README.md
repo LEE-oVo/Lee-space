@@ -246,6 +246,8 @@ cost/shares/amount，建议不含 reason/risks/sources，响应里带 `scope: "p
   即使不带，服务端也会把当天的 nav/navDate 自动累积成一个点，图随时间变长
 - 前端 `NavChart` 为纯 SVG 手写（`viewBox` + `preserveAspectRatio=none` +
   `vector-effect=non-scaling-stroke`），不引入图表库
+- 两个视图共用一个组件：卡片里是 `compact` 模式（只画趋势线，取**近 20 个交易日**），
+  详情弹窗里是完整版（带坐标轴，拉取**全部历史**，上限 2000 点）
 
 ### 写入令牌与会话体系完全隔离：
 
