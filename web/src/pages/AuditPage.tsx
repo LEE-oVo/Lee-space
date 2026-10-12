@@ -42,6 +42,7 @@ export function AuditPage() {
     <div className="page">
       <div className="card">
         <div style={{ fontWeight: 500, marginBottom: 12 }}>最近操作记录</div>
+        <div className="table-wrap wide">
         <table className="data">
           <thead>
             <tr>
@@ -76,6 +77,7 @@ export function AuditPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

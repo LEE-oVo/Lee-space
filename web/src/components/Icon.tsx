@@ -37,6 +37,8 @@ const paths: Record<string, string> = {
   thunder: 'M13 2.5L5.5 13.5h4.8L9 21.5l7.8-11.4h-4.9z',
   wind: 'M3 8.5h11a3 3 0 1 0-3-3M3 12.5h15a3 3 0 1 1-3 3M3 16.5h7',
   droplet: 'M12 3.2s6 6.3 6 10.3a6 6 0 0 1-12 0c0-4 6-10.3 6-10.3',
+  menu: 'M4 6.5h16M4 12h16M4 17.5h16',
+  close: 'M6 6l12 12M18 6L6 18',
 };
 
 interface IconProps {

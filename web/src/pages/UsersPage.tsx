@@ -118,7 +118,8 @@ export function UsersPage() {
           </div>
         )}
 
-        <table className="data">
+        <div className="table-wrap wide">
+          <table className="data">
           <thead>
             <tr>
               <th style={{ width: 200 }}>用户</th>
@@ -176,10 +177,12 @@ export function UsersPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       <div className="card">
         <div style={{ fontWeight: 500, marginBottom: 10 }}>角色与权限矩阵</div>
+        <div className="table-wrap wide">
         <table className="data">
           <thead>
             <tr>
@@ -207,6 +210,7 @@ export function UsersPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

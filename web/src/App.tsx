@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { Icon } from './components/Icon';
 import { Sidebar } from './components/Sidebar';
 import { ThemePicker } from './components/ThemePicker';
 import { LoginPage } from './pages/LoginPage';
@@ -24,9 +25,15 @@ const TITLES: Record<string, string> = {
 export function App() {
   const { user, loading } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  // 小屏下侧边栏是抽屉，默认收起，点遮罩或切换页面自动关闭
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
 
   const title = useMemo(() => TITLES[location.pathname] || '工作台', [location.pathname]);
+
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [location.pathname]);
 
   if (loading) {
     return (
@@ -42,10 +49,23 @@ export function App() {
   if (!user) return <LoginPage />;
 
   return (
-    <div className="app-shell">
-      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
+    <div className={`app-shell${drawerOpen ? ' drawer-open' : ''}`}>
+      <Sidebar
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((v) => !v)}
+        onNavigate={() => setDrawerOpen(false)}
+      />
+      <div className="sidebar-backdrop" onClick={() => setDrawerOpen(false)} />
       <div className="main">
         <header className="topbar">
+          <button
+            className="btn ghost sm topbar-menu"
+            onClick={() => setDrawerOpen((v) => !v)}
+            title={drawerOpen ? '关闭菜单' : '打开菜单'}
+            aria-label={drawerOpen ? '关闭菜单' : '打开菜单'}
+          >
+            <Icon name={drawerOpen ? 'close' : 'menu'} size={19} />
+          </button>
           <h1>{title}</h1>
           <span className="spacer" />
           <ThemePicker />

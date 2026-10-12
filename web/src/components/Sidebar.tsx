@@ -36,9 +36,10 @@ const NAV: Array<{ section: string; items: NavEntry[] }> = [
 interface Props {
   collapsed: boolean;
   onToggle: () => void;
+  onNavigate?: () => void;
 }
 
-export function Sidebar({ collapsed, onToggle }: Props) {
+export function Sidebar({ collapsed, onToggle, onNavigate }: Props) {
   const { user, can, logout } = useAuth();
 
   const visible = NAV.map((group) => ({
@@ -64,6 +65,7 @@ export function Sidebar({ collapsed, onToggle }: Props) {
                 end={item.to === '/'}
                 className={({ isActive }) => `menu-item${isActive ? ' active' : ''}`}
                 title={item.label}
+                onClick={onNavigate}
               >
                 <span className="menu-icon">
                   <Icon name={item.icon} size={19} />
@@ -107,7 +109,7 @@ export function Sidebar({ collapsed, onToggle }: Props) {
           </div>
         )}
         <div className="row" style={{ gap: 6 }}>
-          <button className="btn ghost sm" onClick={onToggle} title={collapsed ? '展开菜单' : '收起菜单'} style={{ flex: 1 }}>
+          <button className="btn ghost sm collapse-btn" onClick={onToggle} title={collapsed ? '展开菜单' : '收起菜单'} style={{ flex: 1 }}>
             <Icon name={collapsed ? 'expand' : 'collapse'} size={16} />
             {!collapsed && '收起'}
           </button>

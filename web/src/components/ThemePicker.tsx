@@ -30,6 +30,7 @@ export function ThemePicker() {
             right: 0,
             top: 'calc(100% + 8px)',
             width: 268,
+            maxWidth: 'calc(100vw - 24px)',
             background: 'var(--c-surface)',
             border: '1px solid var(--c-border-strong)',
             borderRadius: 'var(--radius-md)',
