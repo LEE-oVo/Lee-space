@@ -129,10 +129,17 @@ export interface FundDaily {
   updatedAt: number;
 }
 
+export interface FundNavPoint {
+  date: string;
+  nav: number;
+}
+
 export interface FundOverview {
   daily: FundDaily | null;
   holdings: FundHolding[];
   advice: FundAdvice[];
+  /** public = 未授权 fund:detail，持仓金额与详细分析已被服务端裁掉 */
+  scope: 'full' | 'public';
 }
 
 export interface AuditLog {

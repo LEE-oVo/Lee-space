@@ -1,5 +1,5 @@
 import type {
-  AuditLog, DshStatus, FundAdvice, FundHolding, FundOverview, PermissionRecord,
+  AuditLog, DshStatus, FundAdvice, FundHolding, FundNavPoint, FundOverview, PermissionRecord,
   RoleRecord, SystemStats, User, WeatherData, WorkbenchUser,
 } from './types';
 
@@ -56,6 +56,10 @@ export const api = {
   funds: () => request<FundOverview>('/funds'),
   fundHistory: (code: string, limit = 10) =>
     request<{ history: FundAdvice[] }>(`/funds/history?code=${encodeURIComponent(code)}&limit=${limit}`),
+  fundSeries: (code: string, limit = 60) =>
+    request<{ code: string; series: FundNavPoint[] }>(
+      `/funds/series?code=${encodeURIComponent(code)}&limit=${limit}`
+    ),
   createFundHolding: (payload: Record<string, unknown>) =>
     request<{ ok: boolean; holding: FundHolding }>('/funds/holdings', { method: 'POST', body: JSON.stringify(payload) }),
   updateFundHolding: (id: number, payload: Record<string, unknown>) =>

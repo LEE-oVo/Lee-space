@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import { Icon } from '../components/Icon';
-import { FundHoldings } from '../components/FundHoldings';
+import { Sparkline } from '../components/Sparkline';
+import { FundDetailModal } from '../components/FundDetailModal';
 import { formatRelative } from '../lib/format';
-import type { FundAdvice, FundAction, FundHolding, FundOverview } from '../types';
+import type { FundAdvice, FundAction, FundHolding, FundNavPoint, FundOverview } from '../types';
 
 const ACTION_LABEL: Record<FundAction, string> = {
   buy: '买入',
@@ -22,11 +24,9 @@ const ACTION_CLASS: Record<FundAction, string> = {
   sell: 'act-sell',
 };
 
-const CONF_LABEL: Record<string, string> = { low: '把握低', medium: '把握中', high: '把握高' };
-
-function pctText(value: number | null | undefined, digits = 2) {
+function pctText(value: number | null | undefined) {
   if (value === null || value === undefined) return '—';
-  return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}%`;
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 }
 
 function toneClass(value: number | null | undefined) {
@@ -34,29 +34,45 @@ function toneClass(value: number | null | undefined) {
   return value >= 0 ? 'up' : 'down';
 }
 
-/** 用估值优先（盘中），没有估值时退回最新净值 */
-function currentPrice(a: FundAdvice | undefined) {
-  if (!a) return null;
-  return a.estimate ?? a.nav ?? null;
-}
-
 function profit(cost: number | null, price: number | null) {
   if (!cost || !price) return null;
   return ((price - cost) / cost) * 100;
 }
 
+interface DetailTarget {
+  code: string;
+  name: string;
+  holding: FundHolding | null;
+  advice: FundAdvice | undefined;
+}
+
 export function FundsPage() {
   const { can } = useAuth();
+  const canDetail = can('fund:detail');
+  const canManage = can('fund:manage');
+
   const [data, setData] = useState<FundOverview | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [histories, setHistories] = useState<Record<string, FundAdvice[]>>({});
-  const [openHistory, setOpenHistory] = useState<string | null>(null);
+  const [series, setSeries] = useState<Record<string, FundNavPoint[]>>({});
+  const [detail, setDetail] = useState<DetailTarget | null>(null);
+  const [expandSummary, setExpandSummary] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      setData(await api.funds());
+      const d = await api.funds();
+      setData(d);
       setError('');
+      const codes = Array.from(
+        new Set([...d.holdings.map((h) => h.code), ...d.advice.map((a) => a.code)])
+      );
+      const results = await Promise.all(codes.map((c) => api.fundSeries(c, 40).catch(() => null)));
+      const map: Record<string, FundNavPoint[]> = {};
+      codes.forEach((c, i) => {
+        const r = results[i];
+        if (r && r.series.length > 1) map[c] = r.series;
+      });
+      setSeries(map);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -68,30 +84,15 @@ export function FundsPage() {
     void load();
   }, [load]);
 
-  async function toggleHistory(code: string) {
-    if (openHistory === code) {
-      setOpenHistory(null);
-      return;
-    }
-    setOpenHistory(code);
-    if (histories[code]) return;
-    try {
-      const res = await api.fundHistory(code, 10);
-      setHistories((prev) => ({ ...prev, [code]: res.history }));
-    } catch {
-      setHistories((prev) => ({ ...prev, [code]: [] }));
-    }
-  }
-
   if (loading) {
     return (
       <div className="page">
-        <div className="grid cols-2">
-          {[0, 1, 2, 3].map((i) => (
+        <div className="grid cols-3">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
             <div className="card" key={i}>
-              <div className="skeleton" style={{ width: 120 }} />
-              <div className="skeleton" style={{ width: 200, height: 24, marginTop: 10 }} />
-              <div className="skeleton" style={{ width: '100%', height: 44, marginTop: 12 }} />
+              <div className="skeleton" style={{ width: 110 }} />
+              <div className="skeleton" style={{ width: 160, height: 22, marginTop: 10 }} />
+              <div className="skeleton" style={{ width: '100%', height: 38, marginTop: 12 }} />
             </div>
           ))}
         </div>
@@ -109,17 +110,16 @@ export function FundsPage() {
   function renderCard(holding: FundHolding | null, advice: FundAdvice | undefined) {
     const code = holding?.code || advice?.code || '';
     const name = holding?.name || advice?.summary || code;
-    const price = currentPrice(advice);
-    const cost = holding?.cost ?? null;
-    const profitPct = profit(cost, price);
-    const profitAmount =
-      holding?.shares && cost !== null && price !== null ? (price - cost) * holding.shares : null;
+    const price = advice?.estimate ?? advice?.nav ?? null;
+    const profitPct = canDetail ? profit(holding?.cost ?? null, price) : null;
+    const pts = series[code];
+    const values = pts ? pts.map((p) => p.nav) : [];
 
     return (
       <div className="card fund-card" key={code}>
-        <div className="row wrap" style={{ justifyContent: 'space-between', gap: 10 }}>
+        <div className="row" style={{ justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 500, fontSize: 15 }}>{name}</div>
+            <div className="fund-name">{name}</div>
             <div className="faint mono" style={{ fontSize: 11 }}>
               {code}
               {holding?.category ? ` · ${holding.category}` : ''}
@@ -128,7 +128,6 @@ export function FundsPage() {
           {advice ? (
             <span className={`pill fund-action ${ACTION_CLASS[advice.action]}`}>
               {ACTION_LABEL[advice.action]}
-              {advice.confidence ? ` · ${CONF_LABEL[advice.confidence] || advice.confidence}` : ''}
             </span>
           ) : (
             <span className="pill">暂无建议</span>
@@ -140,96 +139,53 @@ export function FundsPage() {
             <span className="fund-metric-label">最新净值</span>
             <span className="fund-metric-value mono">
               {advice?.nav ?? '—'}
-              {advice?.navPct !== null && advice?.navPct !== undefined ? (
+              {advice?.navPct !== null && advice?.navPct !== undefined && (
                 <span className={`fund-sub ${toneClass(advice.navPct)}`}> {pctText(advice.navPct)}</span>
-              ) : null}
+              )}
             </span>
           </div>
           <div className="fund-metric">
             <span className="fund-metric-label">盘中估值</span>
             <span className="fund-metric-value mono">
               {advice?.estimate ?? '—'}
-              {advice?.estimatePct !== null && advice?.estimatePct !== undefined ? (
+              {advice?.estimatePct !== null && advice?.estimatePct !== undefined && (
                 <span className={`fund-sub ${toneClass(advice.estimatePct)}`}> {pctText(advice.estimatePct)}</span>
-              ) : null}
+              )}
             </span>
           </div>
-          <div className="fund-metric">
-            <span className="fund-metric-label">持仓盈亏</span>
-            <span className="fund-metric-value mono">
-              {profitPct === null ? '—' : <span className={toneClass(profitPct)}>{pctText(profitPct)}</span>}
-              {profitAmount !== null ? (
-                <span className={`fund-sub ${toneClass(profitAmount)}`}>
-                  {' '}
-                  {profitAmount >= 0 ? '+' : ''}
-                  {profitAmount.toFixed(2)}
-                </span>
-              ) : null}
-            </span>
-          </div>
-          <div className="fund-metric">
-            <span className="fund-metric-label">成本价</span>
-            <span className="fund-metric-value mono">{cost ?? '—'}</span>
-          </div>
+          {canDetail && (
+            <div className="fund-metric">
+              <span className="fund-metric-label">持仓盈亏</span>
+              <span className="fund-metric-value mono">
+                {profitPct === null ? '—' : <span className={toneClass(profitPct)}>{pctText(profitPct)}</span>}
+              </span>
+            </div>
+          )}
         </div>
 
-        {advice?.stale && (
-          <div className="fund-stale">
-            <Icon name="alert" size={13} />
-            当日净值尚未更新，以上基于收盘估值，仅供参考
-          </div>
-        )}
+        {advice?.summary && <div className="fund-oneline">{advice.summary}</div>}
 
-        {advice?.summary && <div className="fund-summary">{advice.summary}</div>}
-        {advice?.reason && <div className="fund-reason">{advice.reason}</div>}
-
-        {advice && advice.risks.length > 0 && (
-          <ul className="fund-risks">
-            {advice.risks.map((r, i) => (
-              <li key={i}>{r}</li>
-            ))}
-          </ul>
-        )}
-
-        {advice && advice.sources.length > 0 && (
-          <div className="fund-sources">
-            {advice.sources.map((s, i) => (
-              <a key={i} href={s.url} target="_blank" rel="noopener noreferrer">
-                {s.title || s.url}
-              </a>
-            ))}
+        {values.length > 1 && (
+          <div className="fund-spark">
+            <Sparkline
+              data={values}
+              min={Math.min(...values)}
+              max={Math.max(...values)}
+              height={38}
+              color={values[values.length - 1] >= values[0] ? 'var(--c-danger)' : 'var(--c-success)'}
+            />
           </div>
         )}
 
         <div className="fund-foot">
-          <button className="btn ghost sm" onClick={() => void toggleHistory(code)}>
+          <button className="btn sm" onClick={() => setDetail({ code, name, holding, advice })}>
             <Icon name="chart" size={13} />
-            {openHistory === code ? '收起历史' : '建议历史'}
+            {canDetail ? '查看详情' : '查看走势'}
           </button>
           {advice?.updatedAt && (
-            <span className="faint" style={{ fontSize: 11 }}>
-              {advice.tradeDate} · {formatRelative(advice.updatedAt)}更新
-            </span>
+            <span className="faint" style={{ fontSize: 11 }}>{formatRelative(advice.updatedAt)}</span>
           )}
         </div>
-
-        {openHistory === code && (
-          <div className="fund-history">
-            {histories[code] === undefined ? (
-              <span className="faint" style={{ fontSize: 12 }}>加载中…</span>
-            ) : histories[code]!.length === 0 ? (
-              <span className="faint" style={{ fontSize: 12 }}>暂无历史记录</span>
-            ) : (
-              histories[code]!.map((h) => (
-                <div className="fund-history-row" key={h.tradeDate}>
-                  <span className="faint mono" style={{ fontSize: 12 }}>{h.tradeDate}</span>
-                  <span className={`pill sm ${ACTION_CLASS[h.action]}`}>{ACTION_LABEL[h.action]}</span>
-                  <span className="faint" style={{ fontSize: 12, minWidth: 0 }}>{h.summary || '—'}</span>
-                </div>
-              ))
-            )}
-          </div>
-        )}
       </div>
     );
   }
@@ -245,37 +201,50 @@ export function FundsPage() {
               <span className="faint" style={{ fontSize: 12 }}>{data.daily.tradeDate}</span>
             )}
           </div>
-          <button className="btn ghost sm" onClick={() => void load()} title="刷新">
-            <Icon name="refresh" size={15} />
-          </button>
+          <div className="row" style={{ gap: 6 }}>
+            {canManage && (
+              <Link className="btn sm" to="/funds/settings">
+                <Icon name="settings" size={13} />
+                持仓配置
+              </Link>
+            )}
+            <button className="btn ghost sm" onClick={() => void load()} title="刷新">
+              <Icon name="refresh" size={15} />
+            </button>
+          </div>
         </div>
 
         {data.daily?.summary ? (
           <>
-            <div className="fund-market">{data.daily.summary}</div>
-            <div className="faint" style={{ fontSize: 12, marginTop: 8 }}>
-              由 WorkBuddy 定时任务调用大模型生成 · {formatRelative(data.daily.updatedAt)}
-              {data.daily.model ? ` · ${data.daily.model}` : ''}
+            <div className={`fund-market${expandSummary ? '' : ' clamp'}`}>{data.daily.summary}</div>
+            <div className="row" style={{ justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
+              <span className="faint" style={{ fontSize: 12 }}>
+                由定时任务调用大模型生成 · {formatRelative(data.daily.updatedAt)}
+              </span>
+              <button className="btn ghost sm" onClick={() => setExpandSummary((v) => !v)}>
+                {expandSummary ? '收起' : '展开全文'}
+              </button>
             </div>
           </>
         ) : (
           <div className="fund-empty">
-            还没有任何分析数据。定时任务会在<b>工作日 14:30</b> 自动运行，
-            抓取当日行情后由大模型给出操作建议并推送到工作台。
-            也可以先到下方「持仓管理」录入你的基金。
+            还没有分析数据。定时任务会在<b>工作日 14:30</b> 自动运行，
+            抓取行情后由大模型给出操作建议并推送到工作台。
+            {canManage && ' 也可以先到「持仓配置」录入你的基金。'}
           </div>
         )}
       </div>
 
       {data.holdings.length > 0 ? (
-        <div className="grid cols-2 mb-12">
+        <div className="grid cols-3 mb-12">
           {data.holdings.map((h) => renderCard(h, adviceByCode.get(h.code)))}
         </div>
       ) : (
         !data.daily && (
           <div className="card">
             <div className="faint" style={{ fontSize: 13 }}>
-              还没有录入持仓。在下方「持仓管理」里添加基金代码与成本价，定时任务就会开始跟踪它们。
+              还没有录入持仓。
+              {canManage ? '到「持仓配置」里添加基金代码与成本价，定时任务就会开始跟踪它们。' : '请联系管理员录入持仓。'}
             </div>
           </div>
         )
@@ -286,16 +255,25 @@ export function FundsPage() {
           <div className="faint" style={{ fontSize: 12, margin: '4px 0 10px' }}>
             以下基金有建议但未录入持仓（可能已清仓）：
           </div>
-          <div className="grid cols-2 mb-12">{extras.map((a) => renderCard(null, a))}</div>
+          <div className="grid cols-3 mb-12">{extras.map((a) => renderCard(null, a))}</div>
         </>
       )}
 
-      {can('fund:manage') && <FundHoldings holdings={data.holdings} onChanged={() => void load()} />}
-
       <div className="fund-disclaimer">
         <Icon name="alert" size={13} />
-        以上内容由 AI 自动汇总公开信息生成，仅作参考，不构成任何投资建议。市场有风险，决策请自行判断。
+        由 AI 自动汇总公开信息生成，仅供参考，不构成投资建议
       </div>
+
+      {detail && (
+        <FundDetailModal
+          code={detail.code}
+          name={detail.name}
+          holding={detail.holding}
+          advice={detail.advice}
+          canDetail={canDetail}
+          onClose={() => setDetail(null)}
+        />
+      )}
     </div>
   );
 }

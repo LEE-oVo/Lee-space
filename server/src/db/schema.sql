@@ -162,6 +162,16 @@ CREATE TABLE IF NOT EXISTS fund_advice (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fund_advice_unique ON fund_advice(code, trade_date);
 CREATE INDEX IF NOT EXISTS idx_fund_advice_date ON fund_advice(trade_date);
 
+-- 净值序列（用于走势图）：由定时任务随建议一起写入，服务端按天累积
+CREATE TABLE IF NOT EXISTS fund_nav (
+  code       TEXT    NOT NULL,
+  nav_date   TEXT    NOT NULL,
+  nav        REAL    NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+  PRIMARY KEY (code, nav_date)
+);
+CREATE INDEX IF NOT EXISTS idx_fund_nav_date ON fund_nav(nav_date);
+
 -- 每日整体结论（市场简述 + 生成来源）
 CREATE TABLE IF NOT EXISTS fund_daily (
   trade_date TEXT PRIMARY KEY,

@@ -26,6 +26,7 @@ const NAV: Array<{ section: string; items: NavEntry[] }> = [
     items: [
       { to: '/users', label: '用户与角色', icon: 'users', permission: 'user:manage' },
       { to: '/audit', label: '审计日志', icon: 'audit', permission: 'audit:read' },
+      { to: '/funds/settings', label: '基金持仓配置', icon: 'chart', permission: 'fund:manage' },
     ],
   },
   {

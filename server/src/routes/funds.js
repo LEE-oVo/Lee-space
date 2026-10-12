@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requirePermission, denyGuest, requireFundIngest, clientIp } from '../middleware/auth.js';
+import { requirePermission, denyGuest, requireFundIngest, clientIp, hasPermission } from '../middleware/auth.js';
 import { writeAudit } from '../db/repo.js';
 import {
   FUND_ACTIONS,
@@ -11,24 +11,44 @@ import {
   latestAdvice,
   latestDaily,
   listHoldings,
+  navSeries,
+  publicAdvice,
+  publicHolding,
   updateHolding,
 } from '../services/funds.js';
 
 const router = Router();
 const CODE_RE = /^[A-Za-z0-9]{4,12}$/;
 
-// 页面数据：登录用户凭 fund:view 查看，游客一律不含此权限（这里再加护栏，防止被误授权）
-router.get('/', requirePermission('fund:view'), denyGuest, (_req, res) => {
+// 页面数据：有 fund:view 即可（游客也包含在内）。
+// 但持仓金额与详细分析正文只在有 fund:detail 时才下发——裁剪必须在服务端做，
+// 前端隐藏是没有用的，数据照样在响应里。
+router.get('/', requirePermission('fund:view'), (req, res) => {
+  const detail = hasPermission(req.user, 'fund:detail');
+  const holdings = listHoldings();
+  const advice = latestAdvice();
   res.json({
     daily: latestDaily(),
-    holdings: listHoldings(),
-    advice: latestAdvice(),
+    holdings: detail ? holdings : holdings.map(publicHolding),
+    advice: detail ? advice : advice.map(publicAdvice),
+    scope: detail ? 'full' : 'public',
   });
 });
 
-router.get('/history', requirePermission('fund:view'), denyGuest, (req, res) => {
+// 净值走势：只有净值数字，不涉及持仓金额，有 fund:view 即可
+router.get('/series', requirePermission('fund:view'), (req, res) => {
   const code = String(req.query.code || '').trim();
   if (!CODE_RE.test(code)) return res.status(400).json({ error: '基金代码非法' });
+  res.json({ code, series: navSeries(code, Number(req.query.limit) || 60) });
+});
+
+// 建议历史：含判断正文，需要 fund:detail
+router.get('/history', requirePermission('fund:view'), (req, res) => {
+  const code = String(req.query.code || '').trim();
+  if (!CODE_RE.test(code)) return res.status(400).json({ error: '基金代码非法' });
+  if (!hasPermission(req.user, 'fund:detail')) {
+    return res.status(403).json({ error: '当前角色不能查看详细分析' });
+  }
   res.json({ history: adviceHistory(code, Number(req.query.limit) || 10) });
 });
 

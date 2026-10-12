@@ -10,6 +10,7 @@ import { OverviewPage } from './pages/OverviewPage';
 import { DshPage } from './pages/DshPage';
 import { SystemPage } from './pages/SystemPage';
 import { FundsPage } from './pages/FundsPage';
+import { FundSettingsPage } from './pages/FundSettingsPage';
 import { UsersPage } from './pages/UsersPage';
 import { AuditPage } from './pages/AuditPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -19,6 +20,7 @@ const TITLES: Record<string, string> = {
   '/harness': 'DeepSeek Harness',
   '/system': '系统状态',
   '/funds': '基金行情',
+  '/funds/settings': '基金持仓配置',
   '/users': '用户与角色',
   '/audit': '审计日志',
   '/settings': '外观与设置',
@@ -79,6 +81,7 @@ export function App() {
             <Route path="/harness" element={<DshPage />} />
             <Route path="/system" element={<SystemPage />} />
             <Route path="/funds" element={<FundsPage />} />
+            <Route path="/funds/settings" element={<FundSettingsPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/audit" element={<AuditPage />} />
             <Route path="/settings" element={<SettingsPage />} />

@@ -119,6 +119,62 @@ export function deleteHolding(id) {
   return db.prepare(`DELETE FROM fund_holdings WHERE id = ?`).run(id).changes > 0;
 }
 
+/* ---------------- 净值序列 ---------------- */
+
+/** 写入净值点（覆盖式），用于走势图 */
+export function saveNavPoints(code, points) {
+  if (!Array.isArray(points) || points.length === 0) return 0;
+  const db = getDb();
+  const stmt = db.prepare(
+    `INSERT INTO fund_nav (code, nav_date, nav, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(code, nav_date) DO UPDATE SET nav = excluded.nav`
+  );
+  const run = db.transaction((rows) => {
+    for (const p of rows) stmt.run(code, p.date, p.nav, now());
+  });
+  run(points);
+  return points.length;
+}
+
+export function navSeries(code, limit = 60) {
+  const db = getDb();
+  const rows = db.prepare(
+    `SELECT nav_date, nav FROM fund_nav WHERE code = ? ORDER BY nav_date DESC LIMIT ?`
+  ).all(code, Math.min(Math.max(Number(limit) || 60, 5), 365));
+  return rows.reverse().map((r) => ({ date: r.nav_date, nav: r.nav }));
+}
+
+/* ---------------- 对外输出的裁剪 ---------------- */
+
+// 没有 fund:detail 时（游客等）：不给持仓成本/份额/金额，也不给详细分析正文
+export function publicHolding(h) {
+  return {
+    id: h.id,
+    code: h.code,
+    name: h.name,
+    category: h.category || '',
+    sortOrder: h.sort_order || 0,
+  };
+}
+
+export function publicAdvice(a) {
+  return {
+    code: a.code,
+    tradeDate: a.trade_date,
+    action: a.action,
+    confidence: a.confidence || null,
+    nav: a.nav,
+    navDate: a.nav_date || null,
+    estimate: a.estimate,
+    estimatePct: a.estimate_pct,
+    navPct: a.nav_pct,
+    summary: a.summary || '',
+    stale: Boolean(a.stale),
+    model: a.model || null,
+    updatedAt: a.updated_at,
+  };
+}
+
 /* ---------------- 建议 ---------------- */
 
 /** 每只基金各取最新一条建议 */
@@ -168,6 +224,7 @@ export function ingestAdvice(payload) {
   if (items.length > 100) errors.push('items 超过 100 条');
 
   const normalized = [];
+  const navPoints = []; // code -> 序列，建议入库后统一写净值表
   items.forEach((raw, index) => {
     const at = `items[${index}]`;
     const code = String(raw?.code || '').trim();
@@ -190,6 +247,16 @@ export function ingestAdvice(payload) {
       errors.push(`${at}.navDate 格式错误`);
       return;
     }
+    if (Array.isArray(raw?.navSeries)) {
+      const points = [];
+      raw.navSeries.slice(0, 400).forEach((p) => {
+        const d = String(p?.date || '').trim();
+        const v = parseNum(p?.nav);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(d) && v !== null) points.push({ date: d, nav: v });
+      });
+      if (points.length > 0) navPoints.push({ code, points });
+    }
+
     normalized.push({
       code,
       name: raw?.name ? String(raw.name).slice(0, 80) : null,
@@ -245,7 +312,14 @@ export function ingestAdvice(payload) {
   );
 
   const run = db.transaction((rows) => {
-    for (const row of rows) upsert.run({ ...row, now: now() });
+    for (const row of rows) {
+      upsert.run({ ...row, now: now() });
+      // 当天净值自动入序列，即使定时任务没给历史也能逐日累积
+      if (row.nav !== null && row.navDate) {
+        saveNavPoints(row.code, [{ date: row.navDate, nav: row.nav }]);
+      }
+    }
+    for (const item of navPoints) saveNavPoints(item.code, item.points);
     daily.run({
       tradeDate,
       summary: payload?.summary ? String(payload.summary).slice(0, 2000) : null,

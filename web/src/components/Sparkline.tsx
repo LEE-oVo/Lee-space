@@ -4,21 +4,24 @@ interface SparklineProps {
   height?: number;
   /** 固定纵轴上界，不给则按数据自适应 */
   max?: number;
+  /** 固定纵轴下界，默认 0。净值这类不接近 0 的序列要显式给，否则会被压成一条直线 */
+  min?: number;
 }
 
 const W = 320;
 const PAD = 4;
 
-export function Sparkline({ data, color = 'var(--c-accent)', height = 64, max }: SparklineProps) {
+export function Sparkline({ data, color = 'var(--c-accent)', height = 64, max, min }: SparklineProps) {
   const H = height;
   const points = data.length ? data : [0];
   const upper = max ?? Math.max(...points, 1);
-  const lower = 0;
+  const lower = min ?? 0;
   const span = upper - lower || 1;
 
   const coords = points.map((v, i) => {
     const x = points.length === 1 ? W / 2 : (i / (points.length - 1)) * W;
-    const y = H - PAD - ((Math.max(v, lower) - lower) / span) * (H - PAD * 2);
+    const clamped = Math.min(Math.max(v, lower), upper);
+    const y = H - PAD - ((clamped - lower) / span) * (H - PAD * 2);
     return [x, y] as const;
   });
 

@@ -217,13 +217,37 @@ WorkBuddy 定时任务（工作日 14:30）
 
 | 接口 | 鉴权 | 用途 |
 |---|---|---|
-| `GET /wb-api/funds` | `fund:view` | 页面数据（持仓 + 最新建议 + 当日结论） |
-| `GET /wb-api/funds/history?code=` | `fund:view` | 单只基金的建议历史 |
+| `GET /wb-api/funds` | `fund:view` | 页面数据（按权限裁剪，见下） |
+| `GET /wb-api/funds/series?code=` | `fund:view` | 净值走势序列 |
+| `GET /wb-api/funds/history?code=` | `fund:detail` | 单只基金的建议历史 |
 | `POST/PATCH/DELETE /wb-api/funds/holdings` | `fund:manage` | 持仓维护 |
 | `GET /wb-api/funds/holdings` | 写入令牌 | 供定时任务读取持仓 |
 | `POST /wb-api/funds/ingest` | 写入令牌 | 写入建议，强校验 |
 
-写入令牌与会话体系完全隔离：
+### 权限分层（信息是否敏感由服务端裁剪）
+
+| 权限 | 默认角色 | 能看到什么 |
+|---|---|---|
+| `fund:view` | admin / operator / **guest** | 净值、估值、涨跌、操作建议结论、净值走势图 |
+| `fund:detail` | admin / operator | 详细分析正文、风险、来源、成本价、份额、投入金额、盈亏 |
+| `fund:manage` | admin / operator | 持仓配置页（`/funds/settings`）的增删改 |
+
+**裁剪必须发生在服务端**：无 `fund:detail` 时，`GET /funds` 返回的持仓不含
+cost/shares/amount，建议不含 reason/risks/sources，响应里带 `scope: "public"` 标记。
+前端隐藏没有意义——数据照样在 HTTP 响应里。
+
+页面结构刻意做薄：列表页每只基金只有一行结论 + 迷你走势，
+详细分析、持仓明细、建议历史全部收进「查看详情」弹窗（移动端为底部抽屉）。
+
+### 净值走势图
+
+- 数据表 `fund_nav`（`PRIMARY KEY(code, nav_date)`），覆盖式写入
+- 定时任务在 payload 的 `items[].navSeries` 里带历史序列（可选）；
+  即使不带，服务端也会把当天的 nav/navDate 自动累积成一个点，图随时间变长
+- 前端 `NavChart` 为纯 SVG 手写（`viewBox` + `preserveAspectRatio=none` +
+  `vector-effect=non-scaling-stroke`），不引入图表库
+
+### 写入令牌与会话体系完全隔离：
 
 ```bash
 cd /opt/workbench/server && sudo node src/scripts/rotate-fund-token.js   # 生成/轮换
