@@ -2,7 +2,7 @@ import express from 'express';
 import {
   listUsers, listRoles, listPermissions, getUserById, getUserByUsername,
   createUser, updateProfile, setUserStatus, setUserRoles, updatePassword,
-  writeAudit, listAudit, getRolesAndPermissions,
+  writeAudit, listAudit, getRolesAndPermissions, setRolePermissions,
 } from '../db/repo.js';
 import { requirePermission, clientIp, requireAuth, denyGuest } from '../middleware/auth.js';
 import { hashPassword, passwordIssues } from '../lib/password.js';
@@ -96,6 +96,34 @@ router.delete('/users/:id', requirePermission('user:manage'), (req, res) => {
 
 router.get('/roles', requireAuth, denyGuest, (req, res) => {
   res.json({ roles: listRoles(), permissions: listPermissions() });
+});
+
+// 修改角色的权限（仅 role:manage）。admin 角色由启动时的基线种子固定为全权限，
+// 改了也会被下次启动重新补齐，因此直接拒绝，避免误导。
+router.patch('/roles/:code', requirePermission('role:manage'), denyGuest, (req, res) => {
+  const code = String(req.params.code || '').trim();
+  if (code === 'admin') {
+    return res.status(400).json({ error: '管理员角色固定拥有全部权限，不可修改' });
+  }
+  if (!Array.isArray(req.body?.permissions)) {
+    return res.status(400).json({ error: 'permissions 必须是数组' });
+  }
+
+  const perms = req.body.permissions.map(String).slice(0, 200);
+  if (!setRolePermissions(code, perms)) {
+    return res.status(404).json({ error: '角色不存在' });
+  }
+
+  writeAudit({
+    userId: req.user.id,
+    username: req.user.username,
+    action: 'role.update',
+    target: code,
+    detail: perms.join(','),
+    ip: clientIp(req),
+  });
+  // 权限是按请求实时从库里读的，改完对已登录会话下一次请求即生效
+  res.json({ ok: true, roles: listRoles() });
 });
 
 router.get('/audit', requirePermission('audit:read'), (req, res) => {

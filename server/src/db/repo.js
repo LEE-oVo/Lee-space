@@ -206,3 +206,25 @@ export function listRoles() {
 export function listPermissions() {
   return getDb().prepare(`SELECT code, module, description FROM permissions ORDER BY module, code`).all();
 }
+
+/** 全量覆盖某个角色的权限（不在 permissions 表里的 code 直接忽略） */
+export function setRolePermissions(roleCode, permCodes) {
+  const db = getDb();
+  const role = db.prepare(`SELECT id FROM roles WHERE code = ?`).get(roleCode);
+  if (!role) return false;
+
+  const valid = new Set(db.prepare(`SELECT code FROM permissions`).all().map((p) => p.code));
+  const codes = Array.isArray(permCodes) ? permCodes.filter((c) => valid.has(String(c))) : [];
+
+  const clear = db.prepare(`DELETE FROM role_permissions WHERE role_id = ?`);
+  const insert = db.prepare(
+    `INSERT INTO role_permissions (role_id, permission_id)
+     SELECT ?, id FROM permissions WHERE code = ?`
+  );
+  const run = db.transaction(() => {
+    clear.run(role.id);
+    for (const c of codes) insert.run(role.id, String(c));
+  });
+  run();
+  return true;
+}

@@ -1229,6 +1229,33 @@ table.data tbody tr:hover {
   background: color-mix(in srgb, var(--c-warning) 10%, transparent);
 }
 
+/* 角色权限编辑弹窗 */
+.perm-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.perm-group {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--c-surface-2);
+}
+.perm-group-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c-text-dim);
+  margin-bottom: 8px;
+}
+.perm-diff {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--c-text-dim);
+  border: 1px dashed var(--c-border-strong);
+}
+
 /* 净值折线图 */
 .nav-chart {
   width: 100%;

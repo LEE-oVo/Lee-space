@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
+import { useAuth } from '../auth';
 import { Icon } from '../components/Icon';
+import { RolePermissionsModal } from '../components/RolePermissionsModal';
+import { permissionLabel } from '../lib/permissions';
 import { formatRelative } from '../lib/format';
-import type { RoleRecord, WorkbenchUser } from '../types';
+import type { PermissionRecord, RoleRecord, WorkbenchUser } from '../types';
 
 export function UsersPage() {
+  const { can } = useAuth();
+  const canManageRoles = can('role:manage');
   const [users, setUsers] = useState<WorkbenchUser[]>([]);
   const [roles, setRoles] = useState<RoleRecord[]>([]);
+  const [permissions, setPermissions] = useState<PermissionRecord[]>([]);
+  const [editingRole, setEditingRole] = useState<RoleRecord | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [creating, setCreating] = useState(false);
@@ -17,11 +24,14 @@ export function UsersPage() {
       const [u, r] = await Promise.all([api.listUsers(), api.roles()]);
       setUsers(u.users);
       setRoles(r.roles);
+      setPermissions(r.permissions);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
     }
   }, []);
+
+  const labelOf = (code: string) => permissionLabel(permissions.find((p) => p.code === code));
 
   useEffect(() => {
     void load();
@@ -181,7 +191,15 @@ export function UsersPage() {
       </div>
 
       <div className="card">
-        <div style={{ fontWeight: 500, marginBottom: 10 }}>角色与权限矩阵</div>
+        <div className="row wrap" style={{ justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+          <div>
+            <div style={{ fontWeight: 500 }}>角色与权限矩阵</div>
+            <div className="faint" style={{ fontSize: 12 }}>权限以中文显示，鼠标悬停可看原始权限码</div>
+          </div>
+          {!canManageRoles && (
+            <span className="faint" style={{ fontSize: 12 }}>仅管理员可修改角色权限</span>
+          )}
+        </div>
         <div className="table-wrap wide">
         <table className="data">
           <thead>
@@ -189,6 +207,7 @@ export function UsersPage() {
               <th style={{ width: 120 }}>角色</th>
               <th style={{ width: 220 }}>说明</th>
               <th>权限</th>
+              <th style={{ width: 110 }}>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -201,10 +220,25 @@ export function UsersPage() {
                 <td className="muted">{r.description}</td>
                 <td>
                   <div className="row wrap" style={{ gap: 5 }}>
+                    {r.permissions.length === 0 && <span className="faint">无权限</span>}
                     {r.permissions.map((p) => (
-                      <span className="pill" key={p} style={{ fontSize: 11 }}>{p}</span>
+                      <span className="pill" key={p} style={{ fontSize: 11 }} title={p}>
+                        {labelOf(p)}
+                      </span>
                     ))}
                   </div>
+                </td>
+                <td>
+                  {r.code === 'admin' ? (
+                    <span className="faint" style={{ fontSize: 12 }}>固定全权限</span>
+                  ) : canManageRoles ? (
+                    <button className="btn ghost sm" onClick={() => setEditingRole(r)}>
+                      <Icon name="edit" size={13} />
+                      编辑权限
+                    </button>
+                  ) : (
+                    <span className="faint" style={{ fontSize: 12 }}>—</span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -212,6 +246,18 @@ export function UsersPage() {
         </table>
         </div>
       </div>
+
+      {editingRole && (
+        <RolePermissionsModal
+          role={editingRole}
+          permissions={permissions}
+          onClose={() => setEditingRole(null)}
+          onSaved={(next) => {
+            setRoles(next);
+            setNotice(`角色「${editingRole.name}」的权限已更新`);
+          }}
+        />
+      )}
     </div>
   );
 }

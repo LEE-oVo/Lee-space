@@ -73,5 +73,10 @@ export const api = {
     request<{ ok: boolean }>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteUser: (id: number) => request<{ ok: boolean }>(`/admin/users/${id}`, { method: 'DELETE' }),
   roles: () => request<{ roles: RoleRecord[]; permissions: PermissionRecord[] }>('/admin/roles'),
+  updateRolePermissions: (code: string, permissions: string[]) =>
+    request<{ ok: boolean; roles: RoleRecord[] }>(`/admin/roles/${encodeURIComponent(code)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ permissions }),
+    }),
   audit: (limit = 100) => request<{ logs: AuditLog[] }>(`/admin/audit?limit=${limit}`),
 };
