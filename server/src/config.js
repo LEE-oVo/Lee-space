@@ -50,7 +50,10 @@ export const config = {
   weatherCity: process.env.WEATHER_CITY || '深圳',
   weatherLat: Number(process.env.WEATHER_LAT || 22.54554),
   weatherLon: Number(process.env.WEATHER_LON || 114.0683),
-  // 基金建议写入令牌：仅授予「写建议 + 读持仓」，给 WorkBuddy 定时任务使用。
+  // 个人文件库：文件一律存在这里，绝不放进 Nginx 静态目录，下载必须过鉴权
+  fileDir: process.env.FILE_DIR || '/opt/workbench/data/files',
+  fileMaxMb: Number(process.env.FILE_MAX_MB || 20),
+  fileQuotaMb: Number(process.env.FILE_QUOTA_MB || 2048),
   // 未配置时 ingest 接口直接关闭（返回 503），避免开着无鉴权的写接口。
   fundIngestToken: process.env.FUND_INGEST_TOKEN || '',
   isProd: process.env.NODE_ENV !== 'development',

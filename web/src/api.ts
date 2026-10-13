@@ -1,6 +1,6 @@
 import type {
-  AuditLog, DshStatus, FundAdvice, FundHolding, FundNavPoint, FundOverview, PermissionRecord,
-  RoleRecord, SystemStats, User, WeatherData, WorkbenchUser,
+  AuditLog, DshStatus, FileItem, FileQuota, FundAdvice, FundHolding, FundNavPoint,
+  FundOverview, PermissionRecord, RoleRecord, SystemStats, User, WeatherData, WorkbenchUser,
 } from './types';
 
 // 注意：/api 前缀已整段让给 DeepSeek Harness，工作台自身接口统一走 /wb-api
@@ -65,6 +65,32 @@ export const api = {
   updateFundHolding: (id: number, payload: Record<string, unknown>) =>
     request<{ ok: boolean; holding: FundHolding }>(`/funds/holdings/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteFundHolding: (id: number) => request<{ ok: boolean }>(`/funds/holdings/${id}`, { method: 'DELETE' }),
+
+  // 文件库
+  files: () => request<{ files: FileItem[]; quota: FileQuota; categories: string[] }>('/files'),
+  // 上传用 XHR 而不是 fetch：只有 XHR 能拿到上传进度
+  uploadFile: (form: FormData, onProgress?: (percent: number) => void) =>
+    new Promise<{ ok: boolean; id: number }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_PREFIX}/files`);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+      xhr.onload = () => {
+        let data: { error?: string } = {};
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch { /* 非 JSON 响应 */ }
+        if (xhr.status >= 200 && xhr.status < 300) return resolve(data as { ok: boolean; id: number });
+        reject(new Error(data?.error || `上传失败 (${xhr.status})`));
+      };
+      xhr.onerror = () => reject(new Error('网络错误，上传失败'));
+      xhr.send(form);
+    }),
+  updateFile: (id: number, patch: Record<string, unknown>) =>
+    request<{ ok: boolean }>(`/files/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteFile: (id: number) => request<{ ok: boolean }>(`/files/${id}`, { method: 'DELETE' }),
 
   listUsers: () => request<{ users: WorkbenchUser[] }>('/admin/users'),
   createUser: (payload: Record<string, unknown>) =>

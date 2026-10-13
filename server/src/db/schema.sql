@@ -117,7 +117,27 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
 );
 
--- ---------- 基金行情分析 ----------
+-- ---------- 个人文件库 ----------
+CREATE TABLE IF NOT EXISTS files (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT    NOT NULL,          -- 展示用的原始文件名
+  store       TEXT    NOT NULL UNIQUE,   -- 磁盘上的存储名（UUID+扩展名，绝不直接用原名拼路径）
+  thumb       TEXT,                      -- 缩略图存储名（浏览器端生成后一并上传）
+  ext         TEXT    NOT NULL,
+  mime        TEXT    NOT NULL,
+  size        INTEGER NOT NULL,
+  width       INTEGER,
+  height      INTEGER,
+  category    TEXT    NOT NULL DEFAULT 'other' CHECK (category IN ('resume', 'certificate', 'award', 'other')),
+  tags        TEXT,                      -- JSON 字符串数组
+  note        TEXT,
+  uploader_id INTEGER,
+  uploader    TEXT,
+  created_at  INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+  updated_at  INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+);
+CREATE INDEX IF NOT EXISTS idx_files_category ON files(category);
+CREATE INDEX IF NOT EXISTS idx_files_created ON files(created_at DESC);
 -- 说明：本模块只做「存储 + 展示」，行情获取与判断由 WorkBuddy 定时任务调用大模型完成，
 --       结果通过 POST /wb-api/funds/ingest 写入。
 

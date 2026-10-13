@@ -38,6 +38,8 @@ const paths: Record<string, string> = {
   wind: 'M3 8.5h11a3 3 0 1 0-3-3M3 12.5h15a3 3 0 1 1-3 3M3 16.5h7',
   droplet: 'M12 3.2s6 6.3 6 10.3a6 6 0 0 1-12 0c0-4 6-10.3 6-10.3',
   menu: 'M4 6.5h16M4 12h16M4 17.5h16',
+  folder: 'M3 7.5a2 2 0 0 1 2-2h3.6l1.8 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
+  download: 'M12 4v11M7.5 10.5L12 15l4.5-4.5M4.5 20h15',
   close: 'M6 6l12 12M18 6L6 18',
   plus: 'M12 5v14M5 12h14',
   minus: 'M5 12h14',

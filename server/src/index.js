@@ -13,6 +13,7 @@ import adminRoutes from './routes/admin.js';
 import systemRoutes from './routes/system.js';
 import weatherRoutes from './routes/weather.js';
 import fundRoutes from './routes/funds.js';
+import fileRoutes from './routes/files.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIST = process.env.WEB_DIST || path.resolve(__dirname, '..', '..', 'web', 'dist');
@@ -54,6 +55,7 @@ app.use('/wb-api/admin', adminRoutes);
 app.use('/wb-api/system', systemRoutes);
 app.use('/wb-api/weather', weatherRoutes);
 app.use('/wb-api/funds', fundRoutes);
+app.use('/wb-api/files', fileRoutes);
 
 app.use('/wb-api', (_req, res) => res.status(404).json({ error: '接口不存在' }));
 

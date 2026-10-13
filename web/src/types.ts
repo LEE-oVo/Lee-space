@@ -142,6 +142,31 @@ export interface FundOverview {
   scope: 'full' | 'public';
 }
 
+export type FileCategory = 'resume' | 'certificate' | 'award' | 'other';
+
+export interface FileItem {
+  id: number;
+  name: string;
+  ext: string;
+  mime: string;
+  size: number;
+  width: number | null;
+  height: number | null;
+  category: FileCategory;
+  tags: string[];
+  note: string;
+  hasThumb: boolean;
+  uploader: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface FileQuota {
+  used: number;
+  max: number;
+  maxFileBytes: number;
+}
+
 export interface AuditLog {
   id: number;
   user_id: number | null;

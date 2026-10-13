@@ -9,6 +9,7 @@ export const MODULE_LABEL: Record<string, string> = {
   role: '角色与权限',
   audit: '审计日志',
   fund: '基金行情',
+  file: '文件库',
 };
 
 /** 权限展示用中文描述，找不到时退回权限码 */

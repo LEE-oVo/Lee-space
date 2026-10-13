@@ -27,6 +27,14 @@ export function formatMb(mb: number): string {
   return `${Math.round(mb)} MB`;
 }
 
+export function formatBytes(bytes: number): string {
+  const n = Math.max(0, Number(bytes) || 0);
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GB`;
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${n} B`;
+}
+
 export function formatBps(bytesPerSecond: number): string {
   const bps = Math.max(0, bytesPerSecond || 0);
   if (bps >= 1024 ** 3) return `${(bps / 1024 ** 3).toFixed(2)} GB/s`;

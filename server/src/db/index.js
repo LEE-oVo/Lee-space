@@ -39,11 +39,14 @@ const PERMISSIONS = [
   ['fund:view', 'fund', '查看基金行情与操作建议'],
   ['fund:detail', 'fund', '查看详细分析与持仓金额'],
   ['fund:manage', 'fund', '维护基金持仓基础信息'],
+  ['file:view', 'file', '浏览与下载文件库'],
+  ['file:upload', 'file', '上传文件'],
+  ['file:manage', 'file', '修改或删除文件'],
 ];
 
 const ROLES = [
   ['admin', '管理员', '拥有全部权限', 1, PERMISSIONS.map((p) => p[0])],
-  ['operator', '操作者', '可使用 DSH、查看系统状态与基金行情', 1, ['overview:view', 'dsh:access', 'dsh:start', 'dsh:stop', 'system:view', 'fund:view', 'fund:detail', 'fund:manage']],
+  ['operator', '操作者', '可使用 DSH、系统状态、基金行情与文件库', 1, ['overview:view', 'dsh:access', 'dsh:start', 'dsh:stop', 'system:view', 'fund:view', 'fund:detail', 'fund:manage', 'file:view', 'file:upload', 'file:manage']],
   ['viewer', '只读用户', '只读，仅能查看概览', 1, ['overview:view']],
   // 游客：免登录进入，能看到基金行情列表与操作建议，但看不到持仓金额与详细分析
   ['guest', '游客', '免登录，可查看概览、进入已启动的 DSH 与浏览基金行情', 1, ['overview:view', 'dsh:access', 'fund:view']],
