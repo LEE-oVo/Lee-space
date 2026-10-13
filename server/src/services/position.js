@@ -55,6 +55,16 @@ export function navOn(code, date) {
   return row ? row.nav : null;
 }
 
+/** 结算用过的净值落库（幂等 upsert）：持仓市值、走势图、后续 navOn 兜底都靠它 */
+function recordNav(code, date, nav) {
+  getDb()
+    .prepare(
+      `INSERT INTO fund_nav (code, nav_date, nav, created_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(code, nav_date) DO UPDATE SET nav = excluded.nav`
+    )
+    .run(code, date, nav, now());
+}
+
 export function lotsOf(code) {
   return getDb()
     .prepare(`SELECT * FROM fund_lots WHERE code = ? ORDER BY buy_date, id`)
@@ -225,11 +235,16 @@ export function settleDay(tradeDate, navMap = {}) {
       const holding = getHolding(row.code);
       if (holding) ensureInitialLot(holding);
 
-      const nav = navMap[row.code] ?? navOn(row.code, row.tradeDate);
+      // navMap 只对「当天」的记录生效。settleDay 会顺手处理 trade_date <= tradeDate 的
+      // 挂起记录，若把今天的净值套到昨天的操作上，份额与成本都会算错——那种情况宁可
+      // 继续挂起，等任务按各自日期补到正确净值
+      const nav = (row.trade_date === tradeDate ? navMap[row.code] : undefined)
+        ?? navOn(row.code, row.trade_date);
       if (!nav || nav <= 0) {
         pending.push({ code: row.code, date: row.trade_date, action: row.action, reason: '当日净值尚未公布' });
         continue;
       }
+      recordNav(row.code, row.trade_date, nav);
 
       if (row.action === 'hold' || !row.amount) {
         mark.run(nav, null, null, null, null, now(), row.id);
