@@ -107,6 +107,10 @@ export interface FundAdvice {
   tradeDate: string;
   action: FundAction;
   confidence: string | null;
+  /** 建议金额（元），非负；方向由 action 决定。hold 时为 null */
+  amount: number | null;
+  /** 用户是否按建议实际操作过 */
+  executed: boolean;
   nav: number | null;
   navDate: string | null;
   estimate: number | null;

@@ -12,19 +12,30 @@ import {
   latestDaily,
   listHoldings,
   navSeries,
+  positionSummary,
   publicAdvice,
   publicHolding,
+  setAdviceExecuted,
   updateHolding,
+  holdingsForAutomation,
 } from '../services/funds.js';
 
 const router = Router();
 const CODE_RE = /^[A-Za-z0-9]{4,12}$/;
+// 金额规则随接口一起下发给定时任务，避免规则散落在 prompt 里漂移
+const AMOUNT_RULES = {
+  unit: 100,
+  normalMax: 500,
+  note: '加仓/买入金额必须是整百，常规 100-500；仅在明确判断为机会时可超过 500，且需在 reason 说明理由',
+};
 
 // 页面数据：有 fund:view 即可（游客也包含在内）。
 // 但持仓金额与详细分析正文只在有 fund:detail 时才下发——裁剪必须在服务端做，
 // 前端隐藏是没有用的，数据照样在响应里。
 router.get('/', requirePermission('fund:view'), (req, res) => {
-  const detail = hasPermission(req.user, 'fund:detail');
+  // 持仓金额对游客是硬性不可见：即使有人在角色页误勾了 fund:detail 也不放行，
+  // 这条不变量放在服务端，不依赖配置正确
+  const detail = hasPermission(req.user, 'fund:detail') && !req.user.isGuest;
   const holdings = listHoldings();
   const advice = latestAdvice();
   res.json({
@@ -46,15 +57,40 @@ router.get('/series', requirePermission('fund:view'), (req, res) => {
 router.get('/history', requirePermission('fund:view'), (req, res) => {
   const code = String(req.query.code || '').trim();
   if (!CODE_RE.test(code)) return res.status(400).json({ error: '基金代码非法' });
-  if (!hasPermission(req.user, 'fund:detail')) {
+  const detail = hasPermission(req.user, 'fund:detail') && !req.user.isGuest;
+  if (!detail) {
     return res.status(403).json({ error: '当前角色不能查看详细分析' });
   }
   res.json({ history: adviceHistory(code, Number(req.query.limit) || 10) });
 });
 
-// 持仓列表：给定时任务读取用（用令牌而不是会话），这样新增基金不必改任务配置
-router.get('/holdings', requireFundIngest, (_req, res) => {
-  res.json({ holdings: listHoldings() });
+// 持仓列表：给定时任务读取用（用令牌而不是会话），这样新增基金不必改任务配置。
+// 附带每只基金最近的加减仓记录，让模型能看到自己过去的判断与实际执行情况。
+router.get('/holdings', requireFundIngest, (req, res) => {
+  res.json({
+    holdings: holdingsForAutomation(Number(req.query.limit) || 12),
+    amountRules: AMOUNT_RULES,
+  });
+});
+
+// 标记某条建议是否已实际执行：模型回看时才知道真实仓位变化
+router.patch('/executed', requirePermission('fund:manage'), denyGuest, (req, res) => {
+  const code = String(req.body?.code || '').trim();
+  const tradeDate = String(req.body?.tradeDate || '').trim();
+  if (!CODE_RE.test(code)) return res.status(400).json({ error: '基金代码非法' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) return res.status(400).json({ error: '日期格式应为 YYYY-MM-DD' });
+  if (!setAdviceExecuted(code, tradeDate, Boolean(req.body?.executed))) {
+    return res.status(404).json({ error: '记录不存在' });
+  }
+  writeAudit({
+    userId: req.user?.id ?? null,
+    username: req.user?.username ?? null,
+    action: 'fund.record.executed',
+    target: `${code}@${tradeDate}`,
+    detail: req.body?.executed ? '已执行' : '取消执行',
+    ip: clientIp(req),
+  });
+  return res.json({ ok: true, summary: positionSummary(code) });
 });
 
 function audit(req, action, target, detail) {
@@ -115,6 +151,7 @@ router.post('/ingest', requireFundIngest, (req, res) => {
     tradeDate: result.tradeDate,
     actions: FUND_ACTIONS,
     confidence: FUND_CONFIDENCE,
+    amountRules: AMOUNT_RULES,
   });
 });
 

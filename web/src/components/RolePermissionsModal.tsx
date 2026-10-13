@@ -5,6 +5,9 @@ import { Modal } from './Modal';
 import type { PermissionRecord, RoleRecord } from '../types';
 import { MODULE_LABEL, permissionLabel } from '../lib/permissions';
 
+// 游客固定不可拥有的权限：即使勾上也由服务端拦截，这里直接禁掉避免误解
+const GUEST_LOCKED = ['fund:detail'];
+
 interface Props {
   role: RoleRecord;
   permissions: PermissionRecord[];
@@ -67,14 +70,17 @@ export function RolePermissionsModal({ role, permissions, onClose, onSaved }: Pr
             <div className="row wrap" style={{ gap: 6 }}>
               {list.map((p) => {
                 const on = selected.includes(p.code);
+                const locked = role.code === 'guest' && GUEST_LOCKED.includes(p.code);
                 return (
                   <button
                     key={p.code}
-                    className={`btn sm${on ? ' primary' : ''}`}
-                    onClick={() => toggle(p.code)}
-                    title={p.code}
+                    className={`btn sm${on && !locked ? ' primary' : ''}`}
+                    onClick={() => !locked && toggle(p.code)}
+                    disabled={locked}
+                    title={locked ? '游客固定不可查看持仓金额与详细分析' : p.code}
+                    style={locked ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
                   >
-                    {on ? <Icon name="check" size={12} /> : <Icon name="plus" size={12} />}
+                    {on && !locked ? <Icon name="check" size={12} /> : <Icon name="plus" size={12} />}
                     {permissionLabel(p)}
                   </button>
                 );

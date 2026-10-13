@@ -35,6 +35,9 @@ function mapAdvice(row) {
     tradeDate: row.trade_date,
     action: row.action,
     confidence: row.confidence || null,
+    // 金额一律为非负数，方向由 action 决定（正=买/加，减仓卖出也记正数）
+    amount: row.amount === null || row.amount === undefined ? null : row.amount,
+    executed: Boolean(row.executed),
     nav: row.nav,
     navDate: row.nav_date || null,
     estimate: row.estimate,
@@ -175,6 +178,52 @@ export function publicAdvice(a) {
   };
 }
 
+/** 给定时任务的持仓清单：附带每只基金最近的加减仓记录，供模型回看决策 */
+export function holdingsForAutomation(limit = 12) {
+  const holdings = listHoldings();
+  const db = getDb();
+  const stmt = db.prepare(
+    `SELECT * FROM fund_advice WHERE code = ? ORDER BY trade_date DESC LIMIT ?`
+  );
+  return holdings.map((h) => ({
+    ...h,
+    recent: stmt
+      .all(h.code, Math.min(Math.max(Number(limit) || 12, 1), 60))
+      .map((r) => ({
+        date: r.trade_date,
+        action: r.action,
+        amount: r.amount,
+        executed: Boolean(r.executed),
+        nav: r.nav,
+      }))
+      .reverse(),
+  }));
+}
+
+/** 标记某条建议是否已实际执行（前端由用户点一下） */
+export function setAdviceExecuted(code, tradeDate, executed) {
+  const db = getDb();
+  const row = db
+    .prepare(`SELECT id FROM fund_advice WHERE code = ? AND trade_date = ?`)
+    .get(code, tradeDate);
+  if (!row) return false;
+  db.prepare(`UPDATE fund_advice SET executed = ?, updated_at = ? WHERE id = ?`)
+    .run(executed ? 1 : 0, now(), row.id);
+  return true;
+}
+
+/** 累计加减仓金额（只统计已执行的），用于展示与模型参考 */
+export function positionSummary(code) {
+  const rows = adviceHistory(code, 200).filter((a) => a.executed && a.amount);
+  let added = 0;
+  let reduced = 0;
+  for (const a of rows) {
+    if (a.action === 'buy' || a.action === 'add') added += a.amount;
+    if (a.action === 'reduce' || a.action === 'sell') reduced += a.amount;
+  }
+  return { added, reduced, count: rows.length };
+}
+
 /* ---------------- 建议 ---------------- */
 
 /** 每只基金各取最新一条建议 */
@@ -247,6 +296,27 @@ export function ingestAdvice(payload) {
       errors.push(`${at}.navDate 格式错误`);
       return;
     }
+    // 金额：非负数字，方向由 action 决定。买入/加减仓必须给金额，持有必须不给，
+    // 不一致就整批拒绝，让定时任务按 details 修正后重试
+    const rawAmount = raw?.amount;
+    let amount = null;
+    if (rawAmount !== undefined && rawAmount !== null && rawAmount !== '') {
+      const n = Number(rawAmount);
+      if (!Number.isFinite(n) || n < 0 || n > 100000) {
+        errors.push(`${at}.amount 非法：${rawAmount}（应为 0-100000 之间的数字）`);
+        return;
+      }
+      amount = Math.round(n);
+    }
+    if (['buy', 'add', 'reduce', 'sell'].includes(action) && (amount === null || amount <= 0)) {
+      errors.push(`${at} 的 action 为 ${action}，必须给出正数金额 amount`);
+      return;
+    }
+    if (action === 'hold' && amount) {
+      errors.push(`${at} 的 action 为 hold，不应给出金额（给了 ${amount}）`);
+      return;
+    }
+
     if (Array.isArray(raw?.navSeries)) {
       const points = [];
       raw.navSeries.slice(0, 400).forEach((p) => {
@@ -263,6 +333,7 @@ export function ingestAdvice(payload) {
       tradeDate,
       action,
       confidence: confidence || null,
+      amount,
       nav: parseNum(raw?.nav),
       navDate,
       estimate: parseNum(raw?.estimate),
@@ -289,13 +360,14 @@ export function ingestAdvice(payload) {
   const db = getDb();
   const upsert = db.prepare(
     `INSERT INTO fund_advice
-       (code, trade_date, action, confidence, nav, nav_date, estimate, estimate_pct, nav_pct,
+       (code, trade_date, action, confidence, amount, nav, nav_date, estimate, estimate_pct, nav_pct,
         summary, reason, risks, sources, stale, model, created_at, updated_at)
      VALUES
-       (@code, @tradeDate, @action, @confidence, @nav, @navDate, @estimate, @estimatePct, @navPct,
+       (@code, @tradeDate, @action, @confidence, @amount, @nav, @navDate, @estimate, @estimatePct, @navPct,
         @summary, @reason, @risks, @sources, @stale, @model, @now, @now)
      ON CONFLICT(code, trade_date) DO UPDATE SET
-       action = excluded.action, confidence = excluded.confidence, nav = excluded.nav,
+       action = excluded.action, confidence = excluded.confidence, amount = excluded.amount,
+       nav = excluded.nav,
        nav_date = excluded.nav_date, estimate = excluded.estimate,
        estimate_pct = excluded.estimate_pct, nav_pct = excluded.nav_pct,
        summary = excluded.summary, reason = excluded.reason, risks = excluded.risks,

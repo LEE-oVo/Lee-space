@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
@@ -28,10 +28,11 @@ interface Props {
   holding: FundHolding | null;
   advice: FundAdvice | undefined;
   canDetail: boolean;
+  canManage: boolean;
   onClose: () => void;
 }
 
-export function FundDetailModal({ code, name, holding, advice, canDetail, onClose }: Props) {
+export function FundDetailModal({ code, name, holding, advice, canDetail, canManage, onClose }: Props) {
   const [series, setSeries] = useState<FundNavPoint[] | null>(null);
   const [history, setHistory] = useState<FundAdvice[] | null>(null);
   const [error, setError] = useState('');
@@ -57,6 +58,31 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, onClos
     };
   }, [code, canDetail]);
 
+  // 只统计「已执行」的记录，那才是真实发生的仓位变化
+  const totals = useMemo(() => {
+    let added = 0;
+    let reduced = 0;
+    let count = 0;
+    for (const h of history || []) {
+      if (!h.executed || !h.amount) continue;
+      count += 1;
+      if (h.action === 'buy' || h.action === 'add') added += h.amount;
+      if (h.action === 'reduce' || h.action === 'sell') reduced += h.amount;
+    }
+    return { added, reduced, count };
+  }, [history]);
+
+  async function toggleExecuted(h: FundAdvice) {
+    try {
+      await api.setAdviceExecuted(h.code, h.tradeDate, !h.executed);
+      setHistory((prev) =>
+        prev ? prev.map((x) => (x.tradeDate === h.tradeDate ? { ...x, executed: !x.executed } : x)) : prev
+      );
+    } catch {
+      /* 标记失败不影响浏览 */
+    }
+  }
+
   const price = advice?.estimate ?? advice?.nav ?? null;
   const cost = holding?.cost ?? null;
   const profitPct = cost && price ? ((price - cost) / cost) * 100 : null;
@@ -71,6 +97,7 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, onClos
           {advice && (
             <span className={`pill fund-action ${ACTION_CLASS[advice.action]}`}>
               {ACTION_LABEL[advice.action]}
+              {advice.amount ? ` ¥${advice.amount.toLocaleString('zh-CN')}` : ''}
             </span>
           )}
         </span>
@@ -188,22 +215,68 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, onClos
           )}
 
           <div className="fund-detail-block">
-            <div style={{ fontWeight: 500, marginBottom: 8 }}>建议历史</div>
+            <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+              <div style={{ fontWeight: 500 }}>加减仓记录</div>
+              {totals.count > 0 && (
+                <span className="faint" style={{ fontSize: 12 }}>
+                  已执行累计：加仓 ¥{totals.added.toLocaleString('zh-CN')} · 减仓 ¥{totals.reduced.toLocaleString('zh-CN')}
+                </span>
+              )}
+            </div>
+
             {history === null ? (
               <span className="faint" style={{ fontSize: 12 }}>加载中…</span>
             ) : history.length === 0 ? (
-              <span className="faint" style={{ fontSize: 12 }}>暂无历史记录</span>
+              <span className="faint" style={{ fontSize: 12 }}>暂无记录</span>
             ) : (
-              <div className="fund-history">
-                {history.map((h) => (
-                  <div className="fund-history-row" key={h.tradeDate}>
-                    <span className="faint mono" style={{ fontSize: 12 }}>{h.tradeDate}</span>
-                    <span className={`pill sm ${ACTION_CLASS[h.action]}`}>{ACTION_LABEL[h.action]}</span>
-                    <span className="faint" style={{ fontSize: 12, minWidth: 0 }}>{h.summary || '—'}</span>
-                  </div>
-                ))}
+              <div className="table-wrap wide">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 96 }}>日期</th>
+                      <th style={{ width: 118 }}>操作</th>
+                      <th style={{ width: 96 }}>金额</th>
+                      <th style={{ width: 96 }}>执行</th>
+                      <th>结论</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((h) => (
+                      <tr key={h.tradeDate}>
+                        <td className="mono" style={{ fontSize: 12 }}>{h.tradeDate}</td>
+                        <td>
+                          <span className={`pill sm ${ACTION_CLASS[h.action]}`}>
+                            {ACTION_LABEL[h.action]}
+                          </span>
+                        </td>
+                        <td className="mono">{h.amount ? `¥${h.amount.toLocaleString('zh-CN')}` : '—'}</td>
+                        <td>
+                          {h.amount && canManage ? (
+                            <button
+                              className={`btn sm${h.executed ? ' primary' : ''}`}
+                              onClick={() => void toggleExecuted(h)}
+                              title={h.executed ? '点一下取消「已执行」' : '标记为已执行'}
+                            >
+                              {h.executed ? <Icon name="check" size={12} /> : <Icon name="plus" size={12} />}
+                              {h.executed ? '已执行' : '未执行'}
+                            </button>
+                          ) : (
+                            <span className="faint" style={{ fontSize: 12 }}>
+                              {h.amount ? (h.executed ? '已执行' : '未执行') : '—'}
+                            </span>
+                          )}
+                        </td>
+                        <td className="faint" style={{ fontSize: 12 }}>{h.summary || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
+            <div className="faint" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.7 }}>
+              定时任务每次都会读取这张表：已执行的记录代表真实仓位变化，
+              未执行的只代表当时的建议。标记后模型能更准确地判断后续操作。
+            </div>
           </div>
         </>
       )}

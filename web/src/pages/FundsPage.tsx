@@ -128,6 +128,7 @@ export function FundsPage() {
           {advice ? (
             <span className={`pill fund-action ${ACTION_CLASS[advice.action]}`}>
               {ACTION_LABEL[advice.action]}
+              {advice.amount ? ` ¥${advice.amount}` : ''}
             </span>
           ) : (
             <span className="pill">暂无建议</span>
@@ -265,6 +266,7 @@ export function FundsPage() {
           holding={detail.holding}
           advice={detail.advice}
           canDetail={canDetail}
+          canManage={canManage}
           onClose={() => setDetail(null)}
         />
       )}

@@ -24,7 +24,19 @@ export function getDb() {
 
 export function migrate(database) {
   database.exec(fs.readFileSync(SCHEMA_PATH, 'utf8'));
+  ensureFundAdviceColumns(database);
   seedBaseline(database);
+}
+
+// 老库补列：schema.sql 用的是 CREATE TABLE IF NOT EXISTS，
+// 已存在的表不会因为新增字段而重建，需要显式 ALTER
+function ensureFundAdviceColumns(database) {
+  const cols = database.prepare(`PRAGMA table_info(fund_advice)`).all();
+  const has = (name) => cols.some((c) => c.name === name);
+  if (!has('amount')) database.exec(`ALTER TABLE fund_advice ADD COLUMN amount REAL`);
+  if (!has('executed')) {
+    database.exec(`ALTER TABLE fund_advice ADD COLUMN executed INTEGER NOT NULL DEFAULT 0`);
+  }
 }
 
 const PERMISSIONS = [

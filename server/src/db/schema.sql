@@ -165,6 +165,10 @@ CREATE TABLE IF NOT EXISTS fund_advice (
   trade_date   TEXT    NOT NULL,
   action       TEXT    NOT NULL CHECK (action IN ('buy', 'add', 'hold', 'reduce', 'sell')),
   confidence   TEXT    CHECK (confidence IN ('low', 'medium', 'high')),
+  -- 建议金额（元）：正数=买入/加仓，负数=减仓/卖出，0 或空=维持不动
+  amount       REAL,
+  -- 用户是否按建议实际操作了，供模型回看真实仓位变化
+  executed     INTEGER NOT NULL DEFAULT 0,
   nav          REAL,
   nav_date     TEXT,
   estimate     REAL,

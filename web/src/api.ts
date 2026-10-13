@@ -60,6 +60,11 @@ export const api = {
     request<{ code: string; series: FundNavPoint[] }>(
       `/funds/series?code=${encodeURIComponent(code)}&limit=${limit}`
     ),
+  setAdviceExecuted: (code: string, tradeDate: string, executed: boolean) =>
+    request<{ ok: boolean; summary: { added: number; reduced: number; count: number } }>('/funds/executed', {
+      method: 'PATCH',
+      body: JSON.stringify({ code, tradeDate, executed }),
+    }),
   createFundHolding: (payload: Record<string, unknown>) =>
     request<{ ok: boolean; holding: FundHolding }>('/funds/holdings', { method: 'POST', body: JSON.stringify(payload) }),
   updateFundHolding: (id: number, payload: Record<string, unknown>) =>
