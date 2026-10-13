@@ -3,6 +3,7 @@ import { api } from '../api';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { NavChart } from '../components/NavChart';
+import { FundRecordModal } from '../components/FundRecordModal';
 import { formatRelative } from '../lib/format';
 import type { FundAdvice, FundAction, FundHolding, FundNavPoint } from '../types';
 
@@ -36,6 +37,8 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, canMan
   const [series, setSeries] = useState<FundNavPoint[] | null>(null);
   const [history, setHistory] = useState<FundAdvice[] | null>(null);
   const [error, setError] = useState('');
+  const [recording, setRecording] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -56,7 +59,7 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, canMan
     return () => {
       alive = false;
     };
-  }, [code, canDetail]);
+  }, [code, canDetail, reloadKey]);
 
   // 只统计「已执行」的记录，那才是真实发生的仓位变化
   const totals = useMemo(() => {
@@ -217,11 +220,19 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, canMan
           <div className="fund-detail-block">
             <div className="row wrap" style={{ justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
               <div style={{ fontWeight: 500 }}>加减仓记录</div>
-              {totals.count > 0 && (
-                <span className="faint" style={{ fontSize: 12 }}>
-                  已执行累计：加仓 ¥{totals.added.toLocaleString('zh-CN')} · 减仓 ¥{totals.reduced.toLocaleString('zh-CN')}
-                </span>
-              )}
+              <div className="row wrap" style={{ gap: 6 }}>
+                {totals.count > 0 && (
+                  <span className="faint" style={{ fontSize: 12 }}>
+                    已执行累计：加仓 ¥{totals.added.toLocaleString('zh-CN')} · 减仓 ¥{totals.reduced.toLocaleString('zh-CN')}
+                  </span>
+                )}
+                {canManage && (
+                  <button className="btn sm" onClick={() => setRecording(true)}>
+                    <Icon name="plus" size={13} />
+                    补记操作
+                  </button>
+                )}
+              </div>
             </div>
 
             {history === null ? (
@@ -286,6 +297,15 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, canMan
           {advice.tradeDate} · {formatRelative(advice.updatedAt)}更新
           {advice.model ? ` · ${advice.model}` : ''}
         </div>
+      )}
+
+      {recording && (
+        <FundRecordModal
+          code={code}
+          name={name}
+          onClose={() => setRecording(false)}
+          onSaved={() => setReloadKey((k) => k + 1)}
+        />
       )}
     </Modal>
   );

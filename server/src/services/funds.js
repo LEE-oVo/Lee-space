@@ -13,6 +13,32 @@ function now() {
   return Math.floor(Date.now() / 1000);
 }
 
+/**
+ * 金额校验（定时任务与手动补记共用）：
+ * 金额非负，方向由 action 决定；买入/加减仓必须给正数，持有必须不给。
+ * 不合法时把原因推进 errors 并返回 { ok: false }。
+ */
+function resolveAmount(action, rawAmount, at, errors) {
+  let amount = null;
+  if (rawAmount !== undefined && rawAmount !== null && rawAmount !== '') {
+    const n = Number(rawAmount);
+    if (!Number.isFinite(n) || n < 0 || n > 100000) {
+      errors.push(`${at}.amount 非法：${rawAmount}（应为 0-100000 之间的数字）`);
+      return { ok: false };
+    }
+    amount = Math.round(n);
+  }
+  if (['buy', 'add', 'reduce', 'sell'].includes(action) && (amount === null || amount <= 0)) {
+    errors.push(`${at} 的 action 为 ${action}，必须给出正数金额 amount`);
+    return { ok: false };
+  }
+  if (action === 'hold' && amount) {
+    errors.push(`${at} 的 action 为 hold，不应给出金额（给了 ${amount}）`);
+    return { ok: false };
+  }
+  return { ok: true, amount };
+}
+
 function parseNum(value) {
   if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
@@ -230,6 +256,55 @@ export function setAdviceExecuted(code, tradeDate, executed) {
   return true;
 }
 
+/**
+ * 手动补记一笔实际操作：覆盖当天该基金的建议，并直接标记为已执行。
+ * 金额规则与定时任务共用同一套校验，避免两处规则不一样。
+ */
+export function upsertManualRecord({ code, tradeDate, action, amount, nav, note }) {
+  const errors = [];
+  const c = String(code || '').trim();
+  const d = String(tradeDate || '').trim();
+  const act = String(action || '').trim();
+
+  if (!/^[A-Za-z0-9]{4,12}$/.test(c)) errors.push('基金代码非法');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) errors.push('日期格式应为 YYYY-MM-DD');
+  if (!FUND_ACTIONS.includes(act)) errors.push(`action 非法：${act}，可选 ${FUND_ACTIONS.join('/')}`);
+
+  const resolved = errors.length === 0 ? resolveAmount(act, amount, 'record', errors) : { ok: false };
+  if (!resolved.ok) return { ok: false, errors };
+
+  const db = getDb();
+  const t = now();
+  const info = db
+    .prepare(
+      `INSERT INTO fund_advice
+         (code, trade_date, action, confidence, amount, nav, nav_date, summary,
+          reason, risks, sources, stale, model, executed, created_at, updated_at)
+       VALUES
+         (@code, @tradeDate, @action, NULL, @amount, @nav, @tradeDate, @summary,
+          NULL, '[]', '[]', 0, 'manual', 1, @t, @t)
+       ON CONFLICT(code, trade_date) DO UPDATE SET
+         action = excluded.action,
+         amount = excluded.amount,
+         nav = COALESCE(excluded.nav, fund_advice.nav),
+         summary = excluded.summary,
+         model = 'manual',
+         executed = 1,
+         updated_at = @t`
+    )
+    .run({
+      code: c,
+      tradeDate: d,
+      action: act,
+      amount: resolved.amount,
+      nav: nav === undefined || nav === null || nav === '' ? null : Number(nav),
+      summary: String(note || '').slice(0, 200) || '手动补记',
+      t,
+    });
+
+  return { ok: true, id: Number(info.lastInsertRowid) || null };
+}
+
 /** 累计加减仓金额（只统计已执行的），用于展示与模型参考 */
 export function positionSummary(code) {
   const rows = adviceHistory(code, 200).filter((a) => a.executed && a.amount);
@@ -314,26 +389,10 @@ export function ingestAdvice(payload) {
       errors.push(`${at}.navDate 格式错误`);
       return;
     }
-    // 金额：非负数字，方向由 action 决定。买入/加减仓必须给金额，持有必须不给，
-    // 不一致就整批拒绝，让定时任务按 details 修正后重试
-    const rawAmount = raw?.amount;
-    let amount = null;
-    if (rawAmount !== undefined && rawAmount !== null && rawAmount !== '') {
-      const n = Number(rawAmount);
-      if (!Number.isFinite(n) || n < 0 || n > 100000) {
-        errors.push(`${at}.amount 非法：${rawAmount}（应为 0-100000 之间的数字）`);
-        return;
-      }
-      amount = Math.round(n);
-    }
-    if (['buy', 'add', 'reduce', 'sell'].includes(action) && (amount === null || amount <= 0)) {
-      errors.push(`${at} 的 action 为 ${action}，必须给出正数金额 amount`);
-      return;
-    }
-    if (action === 'hold' && amount) {
-      errors.push(`${at} 的 action 为 hold，不应给出金额（给了 ${amount}）`);
-      return;
-    }
+    // 金额规则由定时任务与手动补记共用，抽成函数避免两处规则漂移
+    const resolved = resolveAmount(action, raw?.amount, at, errors);
+    if (!resolved.ok) return;
+    const amount = resolved.amount;
 
     if (Array.isArray(raw?.navSeries)) {
       const points = [];

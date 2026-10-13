@@ -19,6 +19,7 @@ import {
   setAdviceExecuted,
   todayAllocation,
   updateHolding,
+  upsertManualRecord,
   holdingsForAutomation,
 } from '../services/funds.js';
 
@@ -81,6 +82,35 @@ router.get('/holdings', requireFundIngest, (req, res) => {
     amountRules: AMOUNT_RULES,
     // 当天已经分配出去的加仓额度，模型据此在预算内分配
     todayAllocation: todayAllocation(String(req.query.date || todayStr())),
+  });
+});
+
+// 手动补记一笔实际操作（例如建议持有、但我实际加了 300）。
+// 覆盖当天该基金的记录并直接标记 executed=1，供模型回看真实仓位变化。
+router.post('/records', requirePermission('fund:manage'), denyGuest, (req, res) => {
+  const result = upsertManualRecord({
+    code: req.body?.code,
+    tradeDate: req.body?.tradeDate,
+    action: req.body?.action,
+    amount: req.body?.amount,
+    nav: req.body?.nav,
+    note: req.body?.note,
+  });
+  if (!result.ok) {
+    return res.status(400).json({ ok: false, error: '数据校验失败', details: result.errors });
+  }
+  writeAudit({
+    userId: req.user?.id ?? null,
+    username: req.user?.username ?? null,
+    action: 'fund.record.manual',
+    target: `${req.body?.code}@${req.body?.tradeDate}`,
+    detail: `${req.body?.action} ${req.body?.amount ?? ''} ${req.body?.note || ''}`.trim(),
+    ip: clientIp(req),
+  });
+  return res.json({
+    ok: true,
+    id: result.id,
+    allocation: todayAllocation(String(req.body?.tradeDate)),
   });
 });
 
