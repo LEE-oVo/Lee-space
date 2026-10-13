@@ -51,7 +51,10 @@ export const config = {
   weatherLat: Number(process.env.WEATHER_LAT || 22.54554),
   weatherLon: Number(process.env.WEATHER_LON || 114.0683),
   // 个人文件库：文件一律存在这里，绝不放进 Nginx 静态目录，下载必须过鉴权
+  // 基金：每日加仓总预算（所有基金合计，不是每只）
+  // 个人文件库：文件一律存在这里，绝不放进 Nginx 静态目录，下载必须过鉴权
   fileDir: process.env.FILE_DIR || '/opt/workbench/data/files',
+  fundDailyAddBudget: Number(process.env.FUND_DAILY_ADD_BUDGET || 500),
   fileMaxMb: Number(process.env.FILE_MAX_MB || 20),
   fileQuotaMb: Number(process.env.FILE_QUOTA_MB || 2048),
   // 未配置时 ingest 接口直接关闭（返回 503），避免开着无鉴权的写接口。

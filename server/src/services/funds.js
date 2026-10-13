@@ -1,4 +1,5 @@
 import { getDb } from '../db/index.js';
+import { config } from '../config.js';
 
 // 本模块只负责存取与校验：行情抓取和买卖判断由 WorkBuddy 定时任务里的大模型完成，
 // 工作台从不自行推断任何投资结论。
@@ -175,6 +176,23 @@ export function publicAdvice(a) {
     stale: Boolean(a.stale),
     model: a.model || null,
     updatedAt: a.updated_at,
+  };
+}
+
+/** 当日加仓总额：所有基金合计，不是每只各 500 */
+export function todayAllocation(tradeDate) {
+  const row = getDb()
+    .prepare(
+      `SELECT COALESCE(SUM(amount), 0) AS used
+         FROM fund_advice
+        WHERE trade_date = ? AND action IN ('buy', 'add') AND amount IS NOT NULL`
+    )
+    .get(tradeDate);
+  return {
+    date: tradeDate,
+    used: row?.used || 0,
+    budget: config.fundDailyAddBudget,
+    remain: Math.max(0, config.fundDailyAddBudget - (row?.used || 0)),
   };
 }
 

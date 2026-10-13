@@ -152,9 +152,16 @@ sudo vi /opt/workbench/dsh.env     # 或 sudo nano
 
 | action | 金额要求 |
 | --- | --- |
-| buy / add（买入加仓） | **必须是 100 的整数倍**；常规 100-500（五档）。仅在模型明确判断为机会时可提额超过 500（仍整百），且必须在 reason 里写明理由 |
+| buy / add（买入加仓） | **必须是 100 的整数倍**；且**所有基金当日加仓合计不超过 500 元**——这是**每日总预算，不是每只各 500**。仅在模型明确判断为机会时可突破，且必须在 reason 里写明理由 |
 | reduce / sell（减仓卖出） | 金额不限，建议按整百；清仓时按估算持仓市值 |
 | hold（持有） | 不给金额 |
+
+预算不是靠 prompt 记着，而是由接口下发：
+
+- `GET /funds/holdings`（令牌）返回 `amountRules`（`unit:100`、`scope:"daily-total"`、
+  `dailyTotal:500`）与 `todayAllocation`（`used` 已分配 / `budget` 总预算 / `remain` 剩余）
+- 模型分配前先读 `remain`，手动补记过的额度也会被算进 `used`，不会重复给满
+- 预算值可用环境变量 `FUND_DAILY_ADD_BUDGET` 调整，不用改 prompt
 
 金额校验在**服务端**强约束：action 与金额不匹配（如 hold 却给了金额、加仓没给金额、负数）整批拒绝，
 定时任务按返回的 `details` 修正后重试。

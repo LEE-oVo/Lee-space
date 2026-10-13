@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requirePermission, denyGuest, requireFundIngest, clientIp, hasPermission } from '../middleware/auth.js';
 import { writeAudit } from '../db/repo.js';
+import { config } from '../config.js';
 import {
   FUND_ACTIONS,
   FUND_CONFIDENCE,
@@ -16,6 +17,7 @@ import {
   publicAdvice,
   publicHolding,
   setAdviceExecuted,
+  todayAllocation,
   updateHolding,
   holdingsForAutomation,
 } from '../services/funds.js';
@@ -25,9 +27,16 @@ const CODE_RE = /^[A-Za-z0-9]{4,12}$/;
 // 金额规则随接口一起下发给定时任务，避免规则散落在 prompt 里漂移
 const AMOUNT_RULES = {
   unit: 100,
-  normalMax: 500,
-  note: '加仓/买入金额必须是整百，常规 100-500；仅在明确判断为机会时可超过 500，且需在 reason 说明理由',
+  scope: 'daily-total',
+  dailyTotal: config.fundDailyAddBudget,
+  note: `买入/加仓金额必须是整百；所有基金当日加仓合计不超过 ${config.fundDailyAddBudget} 元`
+    + '（是每日总预算，不是每只各这么多）。仅在明确判断为机会时才可突破，且需在 reason 说明理由',
 };
+
+/** 服务器按北京时间取当天日期，避免 UTC 跨日错位 */
+function todayStr() {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+}
 
 // 页面数据：有 fund:view 即可（游客也包含在内）。
 // 但持仓金额与详细分析正文只在有 fund:detail 时才下发——裁剪必须在服务端做，
@@ -70,6 +79,8 @@ router.get('/holdings', requireFundIngest, (req, res) => {
   res.json({
     holdings: holdingsForAutomation(Number(req.query.limit) || 12),
     amountRules: AMOUNT_RULES,
+    // 当天已经分配出去的加仓额度，模型据此在预算内分配
+    todayAllocation: todayAllocation(String(req.query.date || todayStr())),
   });
 });
 
