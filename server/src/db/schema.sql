@@ -147,9 +147,18 @@ CREATE TABLE IF NOT EXISTS fund_holdings (
   code       TEXT    NOT NULL UNIQUE,
   name       TEXT    NOT NULL,
   category   TEXT,
+  -- 持仓由买入批次推导，下面三个是缓存值（结算后刷新）
   cost       REAL,
   shares     REAL,
   amount     REAL,
+  -- 累计已实现盈亏（卖出结算累计）
+  realized   REAL    NOT NULL DEFAULT 0,
+  -- 费率：申购费率百分比；赎回费率按持有天数分档，JSON：
+  -- [{"days":7,"fee":1.5},{"days":30,"fee":0.5},{"days":null,"fee":0}]
+  purchase_fee   REAL NOT NULL DEFAULT 0,
+  redemption_fee TEXT,
+  fee_source     TEXT,
+  fee_updated_at INTEGER,
   note       TEXT,
   status     TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
   sort_order INTEGER NOT NULL DEFAULT 0,
@@ -169,6 +178,13 @@ CREATE TABLE IF NOT EXISTS fund_advice (
   amount       REAL,
   -- 用户是否按建议实际操作了，供模型回看真实仓位变化
   executed     INTEGER NOT NULL DEFAULT 0,
+  -- 结算：用当日收盘净值算出真实份额与费用后回填，settled=1 保证幂等
+  settled        INTEGER NOT NULL DEFAULT 0,
+  settled_nav    REAL,
+  settled_shares REAL,
+  settled_fee    REAL,
+  settled_amount REAL,
+  settled_realized REAL,
   nav          REAL,
   nav_date     TEXT,
   estimate     REAL,
@@ -185,6 +201,22 @@ CREATE TABLE IF NOT EXISTS fund_advice (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fund_advice_unique ON fund_advice(code, trade_date);
 CREATE INDEX IF NOT EXISTS idx_fund_advice_date ON fund_advice(trade_date);
+
+-- 买入批次：卖出时按先进先出逐笔结清，才能算准持有天数与赎回费
+CREATE TABLE IF NOT EXISTS fund_lots (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  code       TEXT    NOT NULL,
+  buy_date   TEXT    NOT NULL,
+  nav        REAL    NOT NULL,          -- 买入当日净值
+  amount     REAL    NOT NULL,          -- 实付申购金额（含费）
+  shares     REAL    NOT NULL,          -- 买入份额
+  unit_cost  REAL    NOT NULL,          -- 该批单位成本（含费）
+  fee        REAL    NOT NULL DEFAULT 0, -- 申购费
+  remain     REAL    NOT NULL,          -- 剩余份额
+  source     TEXT,                       -- 'advice' | 'manual' | 'import'
+  created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+);
+CREATE INDEX IF NOT EXISTS idx_fund_lots_code ON fund_lots(code, buy_date);
 
 -- 净值序列（用于走势图）：由定时任务随建议一起写入，服务端按天累积
 CREATE TABLE IF NOT EXISTS fund_nav (

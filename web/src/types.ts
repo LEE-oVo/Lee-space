@@ -91,6 +91,13 @@ export interface FundHolding {
   cost: number | null;
   shares: number | null;
   amount: number | null;
+  /** 累计已实现盈亏 */
+  realized: number;
+  /** 申购费率百分比 */
+  purchaseFee: number;
+  /** 赎回费率分档：[{days:7,fee:1.5},{days:null,fee:0}] */
+  redemptionFee: Array<{ days: number | null; fee: number }>;
+  feeSource: string;
   note: string;
   status: string;
   sortOrder: number;
@@ -111,6 +118,12 @@ export interface FundAdvice {
   amount: number | null;
   /** 用户是否按建议实际操作过 */
   executed: boolean;
+  /** 是否已用真实收盘净值结算 */
+  settled: boolean;
+  settledNav: number | null;
+  settledShares: number | null;
+  settledFee: number | null;
+  settledRealized: number | null;
   nav: number | null;
   navDate: string | null;
   estimate: number | null;
@@ -138,10 +151,33 @@ export interface FundNavPoint {
   nav: number;
 }
 
+/** 结算后的真实持仓：由买入批次汇总而来 */
+export interface FundPosition {
+  code: string;
+  name: string;
+  shares: number;
+  cost: number | null;
+  costAmount: number;
+  invested: number;
+  realized: number;
+  nav: number | null;
+  navDate: string | null;
+  market: number | null;
+  unrealized: number | null;
+  unrealizedPct: number | null;
+  totalProfit: number | null;
+  purchaseFee: number;
+  redemptionFee: Array<{ days: number | null; fee: number }>;
+  feeSource: string;
+  lots: number;
+}
+
 export interface FundOverview {
   daily: FundDaily | null;
   holdings: FundHolding[];
   advice: FundAdvice[];
+  /** 结算后的持仓（含金额，仅 fund:detail 可见） */
+  positions: Record<string, FundPosition>;
   /** public = 未授权 fund:detail，持仓金额与详细分析已被服务端裁掉 */
   scope: 'full' | 'public';
 }

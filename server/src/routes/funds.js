@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requirePermission, denyGuest, requireFundIngest, clientIp, hasPermission } from '../middleware/auth.js';
 import { writeAudit } from '../db/repo.js';
 import { config } from '../config.js';
+import { holdingView, pendingSettlements, settleDay, updateFees } from '../services/position.js';
 import {
   FUND_ACTIONS,
   FUND_CONFIDENCE,
@@ -52,6 +53,10 @@ router.get('/', requirePermission('fund:view'), (req, res) => {
     daily: latestDaily(),
     holdings: detail ? holdings : holdings.map(publicHolding),
     advice: detail ? advice : advice.map(publicAdvice),
+    // 结算后的真实持仓：份额 / 成本 / 市值 / 浮动盈亏 / 已实现盈亏（含金额，仅 detail）
+    positions: detail
+      ? Object.fromEntries(holdings.map((h) => [h.code, holdingView(h.code)]))
+      : {},
     scope: detail ? 'full' : 'public',
   });
 });
@@ -79,10 +84,78 @@ router.get('/history', requirePermission('fund:view'), (req, res) => {
 router.get('/holdings', requireFundIngest, (req, res) => {
   res.json({
     holdings: holdingsForAutomation(Number(req.query.limit) || 12),
+    // 结算后的真实持仓，让模型知道当前份额与成本
+    positions: Object.fromEntries(listHoldings().map((h) => [h.code, holdingView(h.code)])),
     amountRules: AMOUNT_RULES,
     // 当天已经分配出去的加仓额度，模型据此在预算内分配
     todayAllocation: todayAllocation(String(req.query.date || todayStr())),
   });
+});
+
+// 结算任务的第一步：看看有哪些已执行但还没入账的操作
+router.get('/pending', requireFundIngest, (_req, res) => {
+  const rows = pendingSettlements();
+  res.json({
+    pending: rows.map((r) => ({
+      code: r.code,
+      date: r.trade_date,
+      action: r.action,
+      amount: r.amount,
+    })),
+    count: rows.length,
+  });
+});
+
+// 结算任务的第二步：带上真实净值回来入账（幂等，只处理 settled=0）
+router.post('/settle', requireFundIngest, (req, res) => {
+  const tradeDate = String(req.body?.tradeDate || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) {
+    return res.status(400).json({ error: 'tradeDate 格式应为 YYYY-MM-DD' });
+  }
+  const navs = req.body?.navs && typeof req.body.navs === 'object' ? req.body.navs : {};
+  for (const [code, nav] of Object.entries(navs)) {
+    const n = Number(nav);
+    if (!Number.isFinite(n) || n <= 0) {
+      return res.status(400).json({ error: `${code} 的净值不是正数` });
+    }
+  }
+  // 可选：顺带回写抓取到的费率（定时任务首次跑时填充，之后以页面手改的为准）
+  const fees = req.body?.fees && typeof req.body.fees === 'object' ? req.body.fees : null;
+  if (fees) {
+    for (const [code, fee] of Object.entries(fees)) {
+      if (!CODE_RE.test(String(code))) continue;
+      const list = Array.isArray(fee?.redemptionFee) ? fee.redemptionFee : null;
+      updateFees(String(code), {
+        purchaseFee: fee?.purchaseFee,
+        redemptionFee: list,
+        source: fee?.source || 'auto',
+      });
+    }
+  }
+
+  const result = settleDay(tradeDate, navs);
+  return res.json({ ok: true, ...result });
+});
+
+// 费率由定时任务抓取后回写，也可在页面手改
+router.patch('/fees', requirePermission('fund:manage'), denyGuest, (req, res) => {
+  const code = String(req.body?.code || '').trim();
+  if (!CODE_RE.test(code)) return res.status(400).json({ error: '基金代码非法' });
+  const ok = updateFees(code, {
+    purchaseFee: req.body?.purchaseFee,
+    redemptionFee: req.body?.redemptionFee,
+    source: req.body?.source,
+  });
+  if (!ok) return res.status(404).json({ error: '持仓不存在或没有可更新字段' });
+  writeAudit({
+    userId: req.user?.id ?? null,
+    username: req.user?.username ?? null,
+    action: 'fund.fees.update',
+    target: code,
+    detail: `申购费 ${req.body?.purchaseFee ?? '-'}%`,
+    ip: clientIp(req),
+  });
+  return res.json({ ok: true, position: holdingView(code) });
 });
 
 // 手动补记一笔实际操作（例如建议持有、但我实际加了 300）。

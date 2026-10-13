@@ -1,5 +1,6 @@
 import { getDb } from '../db/index.js';
 import { config } from '../config.js';
+import { parseFeeRules } from './position.js';
 
 // 本模块只负责存取与校验：行情抓取和买卖判断由 WorkBuddy 定时任务里的大模型完成，
 // 工作台从不自行推断任何投资结论。
@@ -7,7 +8,19 @@ import { config } from '../config.js';
 export const FUND_ACTIONS = ['buy', 'add', 'hold', 'reduce', 'sell'];
 export const FUND_CONFIDENCE = ['low', 'medium', 'high'];
 
-const HOLDING_FIELDS = ['code', 'name', 'category', 'cost', 'shares', 'amount', 'note', 'status', 'sortOrder'];
+const HOLDING_FIELDS = [
+  ['code', 'code'],
+  ['name', 'name'],
+  ['category', 'category'],
+  ['note', 'note'],
+  ['status', 'status'],
+  ['sortOrder', 'sort_order'],
+  ['purchaseFee', 'purchase_fee'],
+  ['redemptionFee', 'redemption_fee'],
+  ['cost', 'cost'],
+  ['shares', 'shares'],
+  ['amount', 'amount'],
+];
 
 function now() {
   return Math.floor(Date.now() / 1000);
@@ -65,6 +78,11 @@ function mapAdvice(row) {
     // 金额一律为非负数，方向由 action 决定（正=买/加，减仓卖出也记正数）
     amount: row.amount === null || row.amount === undefined ? null : row.amount,
     executed: Boolean(row.executed),
+    settled: Boolean(row.settled),
+    settledNav: row.settled_nav ?? null,
+    settledShares: row.settled_shares ?? null,
+    settledFee: row.settled_fee ?? null,
+    settledRealized: row.settled_realized ?? null,
     nav: row.nav,
     navDate: row.nav_date || null,
     estimate: row.estimate,
@@ -89,6 +107,10 @@ function mapHolding(row) {
     cost: row.cost,
     shares: row.shares,
     amount: row.amount,
+    realized: row.realized ?? 0,
+    purchaseFee: row.purchase_fee ?? 0,
+    redemptionFee: parseFeeRules(row.redemption_fee),
+    feeSource: row.fee_source || '',
     note: row.note || '',
     status: row.status,
     sortOrder: row.sort_order || 0,
@@ -130,13 +152,19 @@ export function updateHolding(id, patch) {
   const db = getDb();
   const sets = [];
   const params = { id, now: now() };
-  for (const field of HOLDING_FIELDS) {
+  for (const [field, column] of HOLDING_FIELDS) {
     if (!(field in patch)) continue;
-    const column = field === 'sortOrder' ? 'sort_order' : field;
     sets.push(`${column} = @${field}`);
-    params[field] = ['cost', 'shares', 'amount', 'sortOrder'].includes(field)
-      ? (field === 'sortOrder' ? Number(patch[field]) || 0 : parseNum(patch[field]))
-      : (patch[field] ?? null);
+    if (field === 'sortOrder' || field === 'purchaseFee') {
+      params[field] = Number(patch[field]) || 0;
+    } else if (field === 'redemptionFee') {
+      // 存 JSON 分档：[{"days":7,"fee":1.5},{"days":null,"fee":0}]
+      params[field] = JSON.stringify(patch[field] || []);
+    } else if (['cost', 'shares', 'amount'].includes(field)) {
+      params[field] = parseNum(patch[field]);
+    } else {
+      params[field] = patch[field] ?? null;
+    }
   }
   if (sets.length === 0) return null;
   sets.push('updated_at = @now');

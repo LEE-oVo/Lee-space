@@ -5,7 +5,12 @@ import { Modal } from '../components/Modal';
 import { NavChart } from '../components/NavChart';
 import { FundRecordModal } from '../components/FundRecordModal';
 import { formatRelative } from '../lib/format';
-import type { FundAdvice, FundAction, FundHolding, FundNavPoint } from '../types';
+import type { FundAdvice, FundAction, FundHolding, FundNavPoint, FundPosition } from '../types';
+
+function pctText(value: number | null | undefined) {
+  if (value === null || value === undefined) return '—';
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+}
 
 const ACTION_LABEL: Record<FundAction, string> = {
   buy: '买入',
@@ -28,12 +33,13 @@ interface Props {
   name: string;
   holding: FundHolding | null;
   advice: FundAdvice | undefined;
+  position: FundPosition | undefined;
   canDetail: boolean;
   canManage: boolean;
   onClose: () => void;
 }
 
-export function FundDetailModal({ code, name, holding, advice, canDetail, canManage, onClose }: Props) {
+export function FundDetailModal({ code, name, holding, advice, position, canDetail, canManage, onClose }: Props) {
   const [series, setSeries] = useState<FundNavPoint[] | null>(null);
   const [history, setHistory] = useState<FundAdvice[] | null>(null);
   const [error, setError] = useState('');
@@ -88,9 +94,8 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, canMan
 
   const price = advice?.estimate ?? advice?.nav ?? null;
   const cost = holding?.cost ?? null;
-  const profitPct = cost && price ? ((price - cost) / cost) * 100 : null;
-  const profitAmount =
-    holding?.shares && cost !== null && price !== null ? (price - cost) * holding.shares : null;
+  void price;
+  void cost;
 
   return (
     <Modal
@@ -185,26 +190,47 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, canMan
               <table className="data">
                 <tbody>
                   <tr>
-                    <td className="muted" style={{ width: 110 }}>成本价</td>
-                    <td className="mono">{cost ?? '—'}</td>
-                    <td className="muted" style={{ width: 110 }}>持有份额</td>
-                    <td className="mono">{holding.shares ?? '—'}</td>
+                    <td className="muted" style={{ width: 96 }}>持有份额</td>
+                    <td className="mono">{position?.shares ?? holding.shares ?? '—'}</td>
+                    <td className="muted" style={{ width: 96 }}>成本价</td>
+                    <td className="mono">{position?.cost ?? cost ?? '—'}</td>
                   </tr>
                   <tr>
-                    <td className="muted">投入金额</td>
-                    <td className="mono">{holding.amount ?? '—'}</td>
+                    <td className="muted">持仓市值</td>
+                    <td className="mono">{position?.market != null ? `¥${position.market.toFixed(2)}` : '—'}</td>
                     <td className="muted">浮动盈亏</td>
                     <td className="mono">
-                      {profitPct === null ? (
+                      {position?.unrealized == null ? (
                         '—'
                       ) : (
-                        <span className={profitPct >= 0 ? 'up' : 'down'}>
-                          {profitPct >= 0 ? '+' : ''}
-                          {profitPct.toFixed(2)}%
-                          {profitAmount !== null ? ` (${profitAmount >= 0 ? '+' : ''}${profitAmount.toFixed(2)})` : ''}
+                        <span className={position.unrealized >= 0 ? 'up' : 'down'}>
+                          {position.unrealized >= 0 ? '+' : ''}
+                          {position.unrealized.toFixed(2)}
+                          {position.unrealizedPct != null ? ` (${pctText(position.unrealizedPct)})` : ''}
                         </span>
                       )}
                     </td>
+                  </tr>
+                  <tr>
+                    <td className="muted">累计投入</td>
+                    <td className="mono">{position?.invested != null ? `¥${position.invested.toFixed(2)}` : '—'}</td>
+                    <td className="muted">已实现盈亏</td>
+                    <td className="mono">
+                      {position?.realized ? (
+                        <span className={position.realized >= 0 ? 'up' : 'down'}>
+                          {position.realized >= 0 ? '+' : ''}
+                          {position.realized.toFixed(2)}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="muted">买入批次</td>
+                    <td className="mono">{position?.lots ?? '—'}</td>
+                    <td className="muted">净值日期</td>
+                    <td className="mono">{position?.navDate || '—'}</td>
                   </tr>
                   {holding.note && (
                     <tr>
@@ -247,6 +273,7 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, canMan
                       <th style={{ width: 96 }}>日期</th>
                       <th style={{ width: 118 }}>操作</th>
                       <th style={{ width: 96 }}>金额</th>
+                      <th style={{ width: 150 }}>结算</th>
                       <th style={{ width: 96 }}>执行</th>
                       <th>结论</th>
                     </tr>
@@ -261,6 +288,24 @@ export function FundDetailModal({ code, name, holding, advice, canDetail, canMan
                           </span>
                         </td>
                         <td className="mono">{h.amount ? `¥${h.amount.toLocaleString('zh-CN')}` : '—'}</td>
+                        <td className="faint" style={{ fontSize: 11 }}>
+                          {h.settled ? (
+                            h.settledShares ? (
+                              <>
+                                净值 {h.settledNav?.toFixed(4)}
+                                {' · '}
+                                {h.settledShares} 份
+                                {h.settledFee ? ` · 费 ${h.settledFee.toFixed(2)}` : ''}
+                              </>
+                            ) : (
+                              '无需结算'
+                            )
+                          ) : h.executed ? (
+                            <span className="fund-pending">待结算</span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
                         <td>
                           {h.amount && canManage ? (
                             <button

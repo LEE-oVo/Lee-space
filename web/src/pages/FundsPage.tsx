@@ -6,7 +6,9 @@ import { Icon } from '../components/Icon';
 import { NavChart } from '../components/NavChart';
 import { FundDetailModal } from '../components/FundDetailModal';
 import { formatRelative } from '../lib/format';
-import type { FundAdvice, FundAction, FundHolding, FundNavPoint, FundOverview } from '../types';
+import type {
+  FundAdvice, FundAction, FundHolding, FundNavPoint, FundOverview, FundPosition,
+} from '../types';
 
 const ACTION_LABEL: Record<FundAction, string> = {
   buy: '买入',
@@ -44,6 +46,7 @@ interface DetailTarget {
   name: string;
   holding: FundHolding | null;
   advice: FundAdvice | undefined;
+  position: FundPosition | undefined;
 }
 
 export function FundsPage() {
@@ -52,6 +55,7 @@ export function FundsPage() {
   const canManage = can('fund:manage');
 
   const [data, setData] = useState<FundOverview | null>(null);
+  const [positions, setPositions] = useState<Record<string, FundPosition>>({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [series, setSeries] = useState<Record<string, FundNavPoint[]>>({});
@@ -62,6 +66,7 @@ export function FundsPage() {
     try {
       const d = await api.funds();
       setData(d);
+      setPositions(d.positions || {});
       setError('');
       const codes = Array.from(
         new Set([...d.holdings.map((h) => h.code), ...d.advice.map((a) => a.code)])
@@ -113,6 +118,7 @@ export function FundsPage() {
     const name = holding?.name || advice?.summary || code;
     const price = advice?.estimate ?? advice?.nav ?? null;
     const profitPct = canDetail ? profit(holding?.cost ?? null, price) : null;
+    const pos = positions[code];
     const pts = series[code];
 
     return (
@@ -158,11 +164,41 @@ export function FundsPage() {
             <div className="fund-metric">
               <span className="fund-metric-label">持仓盈亏</span>
               <span className="fund-metric-value mono">
-                {profitPct === null ? '—' : <span className={toneClass(profitPct)}>{pctText(profitPct)}</span>}
+                {pos?.unrealizedPct != null ? (
+                  <span className={toneClass(pos.unrealizedPct)}>{pctText(pos.unrealizedPct)}</span>
+                ) : profitPct === null ? (
+                  '—'
+                ) : (
+                  <span className={toneClass(profitPct)}>{pctText(profitPct)}</span>
+                )}
+                {pos?.unrealized != null && (
+                  <span className={`fund-sub ${toneClass(pos.unrealized)}`}>
+                    {' '}
+                    {pos.unrealized >= 0 ? '+' : ''}
+                    {pos.unrealized.toFixed(0)}
+                  </span>
+                )}
               </span>
             </div>
           )}
         </div>
+
+        {canDetail && pos && (
+          <div className="fund-position-line">
+            <span>份额 {pos.shares}</span>
+            <span>成本 {pos.cost ?? '—'}</span>
+            <span>市值 ¥{pos.market ?? '—'}</span>
+            {pos.realized !== 0 && (
+              <span>
+                已实现{' '}
+                <span className={toneClass(pos.realized)}>
+                  {pos.realized >= 0 ? '+' : ''}
+                  {pos.realized.toFixed(2)}
+                </span>
+              </span>
+            )}
+          </div>
+        )}
 
         {advice?.summary && <div className="fund-oneline">{advice.summary}</div>}
 
@@ -173,7 +209,7 @@ export function FundsPage() {
         )}
 
         <div className="fund-foot">
-          <button className="btn sm" onClick={() => setDetail({ code, name, holding, advice })}>
+          <button className="btn sm" onClick={() => setDetail({ code, name, holding, advice, position: positions[code] })}>
             <Icon name="chart" size={13} />
             {canDetail ? '查看详情' : '查看走势'}
           </button>
@@ -265,6 +301,7 @@ export function FundsPage() {
           name={detail.name}
           holding={detail.holding}
           advice={detail.advice}
+          position={detail.position}
           canDetail={canDetail}
           canManage={canManage}
           onClose={() => setDetail(null)}

@@ -1158,6 +1158,28 @@ table.data tbody tr:hover {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.fee-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fee-rule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.fund-pending {
+  color: var(--c-warning);
+}
+.fund-position-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--c-text-faint);
+}
 .fund-spark {
   margin-top: auto;
   padding-top: 10px;

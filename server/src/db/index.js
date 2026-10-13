@@ -25,7 +25,14 @@ export function getDb() {
 export function migrate(database) {
   database.exec(fs.readFileSync(SCHEMA_PATH, 'utf8'));
   ensureFundAdviceColumns(database);
+  ensureFundHoldingColumns(database);
   seedBaseline(database);
+}
+
+function addColumn(database, table, column, ddl) {
+  const cols = database.prepare(`PRAGMA table_info(${table})`).all();
+  if (cols.some((c) => c.name === column)) return;
+  database.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
 }
 
 // 老库补列：schema.sql 用的是 CREATE TABLE IF NOT EXISTS，
@@ -37,6 +44,20 @@ function ensureFundAdviceColumns(database) {
   if (!has('executed')) {
     database.exec(`ALTER TABLE fund_advice ADD COLUMN executed INTEGER NOT NULL DEFAULT 0`);
   }
+  addColumn(database, 'fund_advice', 'settled', 'settled INTEGER NOT NULL DEFAULT 0');
+  addColumn(database, 'fund_advice', 'settled_nav', 'settled_nav REAL');
+  addColumn(database, 'fund_advice', 'settled_shares', 'settled_shares REAL');
+  addColumn(database, 'fund_advice', 'settled_fee', 'settled_fee REAL');
+  addColumn(database, 'fund_advice', 'settled_amount', 'settled_amount REAL');
+  addColumn(database, 'fund_advice', 'settled_realized', 'settled_realized REAL');
+}
+
+function ensureFundHoldingColumns(database) {
+  addColumn(database, 'fund_holdings', 'realized', 'realized REAL NOT NULL DEFAULT 0');
+  addColumn(database, 'fund_holdings', 'purchase_fee', 'purchase_fee REAL NOT NULL DEFAULT 0');
+  addColumn(database, 'fund_holdings', 'redemption_fee', 'redemption_fee TEXT');
+  addColumn(database, 'fund_holdings', 'fee_source', 'fee_source TEXT');
+  addColumn(database, 'fund_holdings', 'fee_updated_at', 'fee_updated_at INTEGER');
 }
 
 const PERMISSIONS = [
