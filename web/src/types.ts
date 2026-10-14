@@ -98,6 +98,8 @@ export interface FundHolding {
   /** 赎回费率分档：[{days:7,fee:1.5},{days:null,fee:0}] */
   redemptionFee: Array<{ days: number | null; fee: number }>;
   feeSource: string;
+  /** 初始建仓日 YYYY-MM-DD，影响赎回费的持有天数档位；留空按净值序列起点估算 */
+  firstBuyDate: string;
   note: string;
   status: string;
   sortOrder: number;

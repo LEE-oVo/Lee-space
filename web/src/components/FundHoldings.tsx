@@ -9,7 +9,7 @@ interface Props {
   onChanged: () => void;
 }
 
-const EMPTY = { code: '', name: '', category: '', cost: '', shares: '', amount: '', note: '', purchaseFee: '0' };
+const EMPTY = { code: '', name: '', category: '', cost: '', shares: '', amount: '', firstBuyDate: '', note: '', purchaseFee: '0' };
 const DEFAULT_RULES = [
   { days: '7', fee: '1.5' },
   { days: '30', fee: '0.5' },
@@ -50,6 +50,7 @@ export function FundHoldings({ holdings, onChanged }: Props) {
       cost: h.cost === null ? '' : String(h.cost),
       shares: h.shares === null ? '' : String(h.shares),
       amount: h.amount === null ? '' : String(h.amount),
+      firstBuyDate: h.firstBuyDate || '',
       note: h.note || '',
       purchaseFee: String(h.purchaseFee ?? 0),
     });
@@ -70,6 +71,7 @@ export function FundHoldings({ holdings, onChanged }: Props) {
       cost: optionalNumber(form.cost),
       shares: optionalNumber(form.shares),
       amount: optionalNumber(form.amount),
+      firstBuyDate: form.firstBuyDate.trim() || null,
       note: form.note.trim() || null,
       purchaseFee: Number(form.purchaseFee) || 0,
       redemptionFee: feeRules
@@ -147,6 +149,18 @@ export function FundHoldings({ holdings, onChanged }: Props) {
             <div className="field">
               <label>投入金额</label>
               <input className="input" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="1100" inputMode="decimal" />
+            </div>
+            <div className="field">
+              <label>建仓日期</label>
+              <input
+                className="input"
+                type="date"
+                value={form.firstBuyDate}
+                onChange={(e) => setForm({ ...form, firstBuyDate: e.target.value })}
+              />
+              <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>
+                赎回费按持有天数分档，填准能避免算贵一档；留空按净值序列起点估算
+              </div>
             </div>
           </div>
           <div className="field">
@@ -241,6 +255,9 @@ export function FundHoldings({ holdings, onChanged }: Props) {
                 <td>
                   <div style={{ fontWeight: 500 }}>{h.name}</div>
                   <div className="faint mono" style={{ fontSize: 11 }}>{h.code}</div>
+                  {h.firstBuyDate && (
+                    <div className="faint" style={{ fontSize: 11 }}>建仓 {h.firstBuyDate}</div>
+                  )}
                 </td>
                 <td>{h.category || '—'}</td>
                 <td className="mono">{h.cost ?? '—'}</td>

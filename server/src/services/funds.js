@@ -17,6 +17,7 @@ const HOLDING_FIELDS = [
   ['sortOrder', 'sort_order'],
   ['purchaseFee', 'purchase_fee'],
   ['redemptionFee', 'redemption_fee'],
+  ['firstBuyDate', 'first_buy_date'],
   ['cost', 'cost'],
   ['shares', 'shares'],
   ['amount', 'amount'],
@@ -111,6 +112,7 @@ function mapHolding(row) {
     purchaseFee: row.purchase_fee ?? 0,
     redemptionFee: parseFeeRules(row.redemption_fee),
     feeSource: row.fee_source || '',
+    firstBuyDate: row.first_buy_date || '',
     note: row.note || '',
     status: row.status,
     sortOrder: row.sort_order || 0,
@@ -379,6 +381,33 @@ export function latestDaily() {
 }
 
 /**
+ * 顶层 summary 缺失时的兜底：用当天的操作分布 + 每条建议的一句话结论拼一段。
+ * 只陈述库里已有的事实，不做任何新判断。
+ */
+function buildDailySummary(tradeDate, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const inCount = rows.filter((r) => r.action === 'buy' || r.action === 'add');
+  const outCount = rows.filter((r) => r.action === 'reduce' || r.action === 'sell');
+  const holdCount = rows.filter((r) => r.action === 'hold');
+
+  const parts = [];
+  if (inCount.length) {
+    const total = inCount.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+    parts.push(`建议买入/加仓 ${inCount.length} 只，合计 ${total} 元`);
+  }
+  if (outCount.length) parts.push(`建议减仓 ${outCount.length} 只`);
+  if (holdCount.length) parts.push(`其余 ${holdCount.length} 只建议持有`);
+
+  const lines = [...inCount, ...outCount]
+    .filter((r) => r.summary)
+    .slice(0, 4)
+    .map((r) => `${r.name || r.code}：${String(r.summary).trim()}`);
+  return [`${tradeDate} 共跟踪 ${rows.length} 只基金：${parts.join('，')}。`, ...lines]
+    .join('\n')
+    .slice(0, 2000);
+}
+
+/**
  * 写入定时任务产出的建议。强校验：任何一条不合法就整批拒绝，
  * 避免脏数据入库后污染前端展示。
  */
@@ -499,7 +528,11 @@ export function ingestAdvice(payload) {
     for (const item of navPoints) saveNavPoints(item.code, item.points);
     daily.run({
       tradeDate,
-      summary: payload?.summary ? String(payload.summary).slice(0, 2000) : null,
+      // 模型偶尔会漏写顶层 summary。没有兜底的话页面头部会显示成"还没有分析数据"，
+      // 而当天明明有几条建议——这里用当天的操作分布 + 每条结论拼一段出来
+      summary: payload?.summary
+        ? String(payload.summary).slice(0, 2000)
+        : buildDailySummary(tradeDate, normalized),
       market: payload?.market ? String(payload.market).slice(0, 2000) : null,
       model: payload?.model ? String(payload.model).slice(0, 80) : null,
       now: now(),

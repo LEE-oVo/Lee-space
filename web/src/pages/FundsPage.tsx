@@ -26,6 +26,15 @@ const ACTION_CLASS: Record<FundAction, string> = {
   sell: 'act-sell',
 };
 
+/** 需要真金白银动手的操作：状态点会缓慢呼吸，提示这条建议是"待执行"的 */
+const ACTION_ACTIVE: Record<FundAction, boolean> = {
+  buy: true,
+  add: true,
+  hold: false,
+  reduce: true,
+  sell: true,
+};
+
 function pctText(value: number | null | undefined) {
   if (value === null || value === undefined) return '—';
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
@@ -58,11 +67,13 @@ export function FundsPage() {
   const [positions, setPositions] = useState<Record<string, FundPosition>>({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [series, setSeries] = useState<Record<string, FundNavPoint[]>>({});
   const [detail, setDetail] = useState<DetailTarget | null>(null);
   const [expandSummary, setExpandSummary] = useState(false);
 
   const load = useCallback(async () => {
+    setRefreshing(true);
     try {
       const d = await api.funds();
       setData(d);
@@ -83,6 +94,7 @@ export function FundsPage() {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -113,7 +125,7 @@ export function FundsPage() {
   const knownCodes = new Set(data.holdings.map((h) => h.code));
   const extras = data.advice.filter((a) => !knownCodes.has(a.code));
 
-  function renderCard(holding: FundHolding | null, advice: FundAdvice | undefined) {
+  function renderCard(holding: FundHolding | null, advice: FundAdvice | undefined, index: number) {
     const code = holding?.code || advice?.code || '';
     const name = holding?.name || advice?.summary || code;
     const price = advice?.estimate ?? advice?.nav ?? null;
@@ -122,23 +134,44 @@ export function FundsPage() {
     const pts = series[code];
 
     return (
-      <div className="card fund-card" key={code}>
-        <div className="row" style={{ justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-          <div style={{ minWidth: 0 }}>
+      <div
+        className="card hoverable fund-card"
+        key={code}
+        style={{ animationDelay: `${index * 70}ms` }}
+      >
+        <div className="fund-card-top">
+          <div className="fund-card-title">
             <div className="fund-name">{name}</div>
-            <div className="faint mono" style={{ fontSize: 11 }}>
+            <div className="faint mono fund-code">
               {code}
               {holding?.category ? ` · ${holding.category}` : ''}
             </div>
           </div>
-          {advice ? (
-            <span className={`pill fund-action ${ACTION_CLASS[advice.action]}`}>
-              {ACTION_LABEL[advice.action]}
-              {advice.amount ? ` ¥${advice.amount}` : ''}
-            </span>
-          ) : (
-            <span className="pill">暂无建议</span>
-          )}
+
+          {/* 状态区：chip 永不换行、永不被长基金名压缩——之前就是被压成竖条才显得变形 */}
+          <div className="fund-card-status">
+            {advice ? (
+              <span
+                className={`fund-chip ${ACTION_CLASS[advice.action]}${ACTION_ACTIVE[advice.action] ? ' is-act' : ''}`}
+              >
+                <span className="fund-chip-dot" />
+                <span className="fund-chip-label">{ACTION_LABEL[advice.action]}</span>
+                {canDetail && advice.amount ? <b className="mono fund-chip-amt">¥{advice.amount}</b> : null}
+              </span>
+            ) : (
+              <span className="fund-chip is-none">
+                <span className="fund-chip-dot" />
+                <span className="fund-chip-label">暂无建议</span>
+              </span>
+            )}
+            {canDetail && advice?.stale && <span className="fund-tag is-warn">数据延迟</span>}
+            {canDetail && advice?.executed && !advice.settled && (
+              <span className="fund-tag is-warn">
+                <Icon name="clock" size={11} />
+                待结算
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="fund-metrics">
@@ -209,9 +242,15 @@ export function FundsPage() {
         )}
 
         <div className="fund-foot">
-          <button className="btn sm" onClick={() => setDetail({ code, name, holding, advice, position: positions[code] })}>
+          <button
+            className="btn sm fund-detail-btn"
+            onClick={() => setDetail({ code, name, holding, advice, position: positions[code] })}
+          >
             <Icon name="chart" size={13} />
             {canDetail ? '查看详情' : '查看走势'}
+            <span className="btn-arrow">
+              <Icon name="chevRight" size={13} />
+            </span>
           </button>
           {advice?.updatedAt && (
             <span className="faint" style={{ fontSize: 11 }}>{formatRelative(advice.updatedAt)}</span>
@@ -224,12 +263,18 @@ export function FundsPage() {
   return (
     <div className="page">
       <div className="card hoverable fund-head">
+        <div className="fund-head-glow" aria-hidden="true" />
         <div className="row wrap" style={{ justifyContent: 'space-between', gap: 12 }}>
           <div className="row" style={{ gap: 8 }}>
-            <Icon name="chart" size={17} />
+            <span className="fund-head-icon">
+              <Icon name="chart" size={15} />
+            </span>
             <span style={{ fontWeight: 500 }}>基金行情与操作建议</span>
             {data.daily?.tradeDate && (
-              <span className="faint" style={{ fontSize: 12 }}>{data.daily.tradeDate}</span>
+              <span className="fund-live">
+                <span className="dot live" />
+                {data.daily.tradeDate}
+              </span>
             )}
           </div>
           <div className="row" style={{ gap: 6 }}>
@@ -239,8 +284,15 @@ export function FundsPage() {
                 持仓配置
               </Link>
             )}
-            <button className="btn ghost sm" onClick={() => void load()} title="刷新">
-              <Icon name="refresh" size={15} />
+            <button
+              className="btn ghost sm"
+              onClick={() => void load()}
+              title="刷新"
+              disabled={refreshing}
+            >
+              <span className={refreshing ? 'icon-spin' : undefined}>
+                <Icon name="refresh" size={15} />
+              </span>
             </button>
           </div>
         </div>
@@ -268,7 +320,7 @@ export function FundsPage() {
 
       {data.holdings.length > 0 ? (
         <div className="grid cols-3 mb-12">
-          {data.holdings.map((h) => renderCard(h, adviceByCode.get(h.code)))}
+          {data.holdings.map((h, i) => renderCard(h, adviceByCode.get(h.code), i))}
         </div>
       ) : (
         !data.daily && (
@@ -286,7 +338,9 @@ export function FundsPage() {
           <div className="faint" style={{ fontSize: 12, margin: '4px 0 10px' }}>
             以下基金有建议但未录入持仓（可能已清仓）：
           </div>
-          <div className="grid cols-3 mb-12">{extras.map((a) => renderCard(null, a))}</div>
+          <div className="grid cols-3 mb-12">
+            {extras.map((a, i) => renderCard(null, a, i + data.holdings.length))}
+          </div>
         </>
       )}
 

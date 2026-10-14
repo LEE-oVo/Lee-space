@@ -986,13 +986,60 @@ table.data tbody tr:hover {
 .up { color: var(--c-danger); }
 .down { color: var(--c-success); }
 
-.fund-head { margin-bottom: 14px; }
+.fund-head { margin-bottom: 14px; position: relative; overflow: hidden; }
+/* 右上角一圈极淡的主题色光晕，让页头不那么"平" */
+.fund-head-glow {
+  position: absolute;
+  top: -60%;
+  right: -10%;
+  width: 46%;
+  height: 220%;
+  pointer-events: none;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--c-accent-2) 16%, transparent),
+    transparent
+  );
+  animation: fund-glow-in 1.2s var(--ease) both;
+}
+@keyframes fund-glow-in {
+  from { opacity: 0; transform: translateX(14px) scale(0.9); }
+  to { opacity: 1; transform: none; }
+}
+.fund-head-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  color: var(--c-accent-contrast);
+  background: linear-gradient(135deg, var(--c-accent), var(--c-accent-2));
+  flex: 0 0 28px;
+  animation: fund-icon-in 0.5s var(--ease) both;
+}
+@keyframes fund-icon-in {
+  from { opacity: 0; transform: scale(0.6) rotate(-12deg); }
+  to { opacity: 1; transform: none; }
+}
+.fund-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--c-text-dim);
+}
 .fund-market {
   font-size: 13px;
   line-height: 1.75;
   color: var(--c-text-dim);
   margin-top: 10px;
   white-space: pre-wrap;
+  animation: fund-rise 0.5s var(--ease) 0.1s backwards;
+}
+@keyframes fund-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
 }
 .fund-empty {
   margin-top: 10px;
@@ -1018,7 +1065,119 @@ table.data tbody tr:hover {
 .fund-card {
   display: flex;
   flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  animation: fund-card-in 0.5s var(--ease) backwards;
 }
+/* 入场：轻微上浮 + 淡入，每张卡延迟由行内 animation-delay 错开 */
+@keyframes fund-card-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+.card.fund-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--c-accent) 42%, var(--c-border));
+  box-shadow: 0 10px 28px -18px var(--c-shadow);
+}
+/* 顶部一条随主题色渐变的细线，hover 时点亮 */
+.fund-card::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--c-accent), var(--c-accent-2), transparent);
+  opacity: 0;
+  transition: opacity 0.28s var(--ease);
+}
+.fund-card:hover::after { opacity: 0.85; }
+
+.fund-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.fund-card-title { min-width: 0; }
+.fund-code { margin-top: 1px; }
+/* 状态区靠右对齐、纵向堆叠；chip 与标签都不允许被压缩或换行 */
+.fund-card-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+/* ---------- 状态 chip：操作建议 ---------- */
+.fund-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 4px 11px 4px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--c-text-dim);
+  border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
+  background: color-mix(in srgb, currentColor 11%, transparent);
+  animation: fund-chip-in 0.42s var(--ease) 0.12s backwards;
+}
+@keyframes fund-chip-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.9); }
+  to { opacity: 1; transform: none; }
+}
+.fund-chip.act-buy { color: var(--c-danger); }
+.fund-chip.act-sell { color: var(--c-success); }
+.fund-chip.act-hold { color: var(--c-text-dim); }
+.fund-chip.is-none {
+  color: var(--c-text-faint);
+  border-style: dashed;
+  background: transparent;
+  font-weight: 400;
+}
+.fund-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 6px;
+}
+/* 需要动手的操作：状态点缓慢呼吸 */
+.fund-chip.is-act .fund-chip-dot {
+  animation: fund-dot-breathe 2.6s var(--ease) infinite;
+}
+@keyframes fund-dot-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 0%, transparent); }
+}
+.fund-chip-amt {
+  font-weight: 600;
+  font-size: 12px;
+  padding-left: 6px;
+  margin-left: 2px;
+  border-left: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+}
+
+/* ---------- 小标签：数据延迟 / 待结算 ---------- */
+.fund-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--c-warning);
+  border: 1px solid color-mix(in srgb, currentColor 34%, transparent);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  animation: fund-chip-in 0.42s var(--ease) 0.2s backwards;
+}
+
 .fund-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
@@ -1032,7 +1191,13 @@ table.data tbody tr:hover {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   background: var(--c-surface-2);
+  animation: fund-rise 0.42s var(--ease) backwards;
+  transition: background-color 0.2s var(--ease);
 }
+.fund-metric:nth-child(1) { animation-delay: 0.16s; }
+.fund-metric:nth-child(2) { animation-delay: 0.22s; }
+.fund-metric:nth-child(3) { animation-delay: 0.28s; }
+.fund-metric:hover { background: color-mix(in srgb, var(--c-accent) 9%, var(--c-surface-2)); }
 .fund-metric-label {
   font-size: 11px;
   color: var(--c-text-faint);
@@ -1101,6 +1266,21 @@ table.data tbody tr:hover {
   gap: 10px;
   margin-top: auto;
   padding-top: 12px;
+}
+/* 详情按钮：右侧箭头 hover 时轻微前移 */
+.fund-detail-btn .btn-arrow {
+  display: inline-flex;
+  margin-left: -2px;
+  opacity: 0.5;
+  transition: transform 0.2s var(--ease), opacity 0.2s var(--ease);
+}
+.fund-detail-btn:hover .btn-arrow {
+  transform: translateX(3px);
+  opacity: 1;
+}
+.icon-spin {
+  display: inline-flex;
+  animation: spin 0.8s linear infinite;
 }
 .fund-history {
   display: flex;
@@ -1183,6 +1363,44 @@ table.data tbody tr:hover {
 .fund-spark {
   margin-top: auto;
   padding-top: 10px;
+}
+
+/* ---------- 迷你走势图入场：线条从左往右画出 ---------- */
+/* pathLength=100 把路径长度归一化，dasharray/dashoffset 才能用同一套数值 */
+.spark-line {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: spark-draw 0.9s var(--ease) 0.18s forwards;
+}
+@keyframes spark-draw {
+  to { stroke-dashoffset: 0; }
+}
+.spark-area {
+  opacity: 0;
+  animation: fade-in 0.6s var(--ease) 0.5s forwards;
+}
+@keyframes fade-in {
+  to { opacity: 1; }
+}
+/* 最新净值点：画完线后弹出，并带一圈缓慢扩散的光环 */
+.spark-dot {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spark-pop 0.4s var(--ease) 0.92s forwards;
+}
+@keyframes spark-pop {
+  from { opacity: 0; transform: scale(0.2); }
+  to { opacity: 1; transform: scale(1); }
+}
+.spark-halo {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spark-halo 2.6s var(--ease) 1.2s infinite;
+}
+@keyframes spark-halo {
+  0% { transform: scale(1); opacity: 0.5; }
+  70%, 100% { transform: scale(2.8); opacity: 0; }
 }
 
 /* 详情弹窗 */
@@ -1831,6 +2049,8 @@ table.data tbody tr:hover {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    /* 顺带清掉延迟：否则带 animation-delay 的入场动画会先保持"初始态"一段时间 */
+    animation-delay: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
 }

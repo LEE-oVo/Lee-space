@@ -159,6 +159,8 @@ CREATE TABLE IF NOT EXISTS fund_holdings (
   redemption_fee TEXT,
   fee_source     TEXT,
   fee_updated_at INTEGER,
+  -- 初始建仓日（用户填，缺省按净值序列起点估算）：赎回费按持有天数分档，估短了会算贵一档
+  first_buy_date TEXT,
   note       TEXT,
   status     TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
   sort_order INTEGER NOT NULL DEFAULT 0,

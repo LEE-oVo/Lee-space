@@ -98,9 +98,11 @@ export function NavChart({ points, height, compact = false }: Props) {
           </g>
         ))}
 
-        <path d={area} fill={`url(#g${gid})`} />
+        <path className="spark-area" d={area} fill={`url(#g${gid})`} />
         <path
+          className="spark-line"
           d={line}
+          pathLength={100}
           fill="none"
           stroke={color}
           strokeWidth="2"
@@ -113,9 +115,14 @@ export function NavChart({ points, height, compact = false }: Props) {
           const isLast = i === points.length - 1;
           if (compact && !isLast) return null;
           return (
-            <circle key={p.date} cx={x(i)} cy={y(p.nav)} r={compact ? 3 : 2.6} fill={color}>
-              <title>{`${p.date}  ${p.nav.toFixed(4)}`}</title>
-            </circle>
+            <g className="spark-dot" key={p.date}>
+              {isLast && (
+                <circle className="spark-halo" cx={x(i)} cy={y(p.nav)} r={compact ? 5 : 4} fill={color} opacity={0.4} />
+              )}
+              <circle cx={x(i)} cy={y(p.nav)} r={compact ? 3 : 2.6} fill={color}>
+                <title>{`${p.date}  ${p.nav.toFixed(4)}`}</title>
+              </circle>
+            </g>
           );
         })}
 

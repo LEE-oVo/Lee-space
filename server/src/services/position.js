@@ -93,7 +93,8 @@ export function aggregate(code) {
 
 /**
  * 老持仓补一个初始批次：这个功能上线前的份额没有批次记录，
- * 不补的话减仓时无从 FIFO。用当前成本价作为该批净值。
+ * 不补的话减仓时无从 FIFO，页面也会显示成 0 份。
+ * 建仓日优先用用户填的 first_buy_date，否则取净值序列起点（只是估算，赎回费档位可能偏高）。
  */
 export function ensureInitialLot(holding) {
   const db = getDb();
@@ -103,10 +104,13 @@ export function ensureInitialLot(holding) {
   const cost = Number(holding.cost);
   if (!Number.isFinite(shares) || shares <= 0 || !Number.isFinite(cost) || cost <= 0) return false;
 
-  const first = db
-    .prepare(`SELECT MIN(nav_date) d FROM fund_nav WHERE code = ?`)
-    .get(holding.code);
-  const buyDate = first?.d || new Date().toISOString().slice(0, 10);
+  let buyDate = String(holding.first_buy_date || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(buyDate)) {
+    const first = db
+      .prepare(`SELECT MIN(nav_date) d FROM fund_nav WHERE code = ?`)
+      .get(holding.code);
+    buyDate = first?.d || new Date().toISOString().slice(0, 10);
+  }
   db.prepare(
     `INSERT INTO fund_lots (code, buy_date, nav, amount, shares, unit_cost, fee, remain, source, created_at)
      VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'import', ?)`
@@ -297,6 +301,8 @@ function syncCost(code) {
 export function holdingView(code) {
   const holding = getHolding(code);
   if (!holding) return null;
+  // 从没结算过的持仓还没有批次，先补一个初始批次，否则页面会显示成 0 份
+  ensureInitialLot(holding);
   const agg = aggregate(code);
   const latest = getDb()
     .prepare(`SELECT nav, nav_date FROM fund_nav WHERE code = ? ORDER BY nav_date DESC LIMIT 1`)
