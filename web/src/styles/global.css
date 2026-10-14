@@ -1282,20 +1282,55 @@ table.data tbody tr:hover {
   display: inline-flex;
   animation: spin 0.8s linear infinite;
 }
-.fund-history {
+/* ---------- 加减仓记录：卡片式纵向列表 ---------- */
+/* 以前这里是一张 6 列的表格：前 5 列固定宽度合计 556px，塞进 660px 的弹窗后
+   「结论」只剩约 70px，几十个字要占五六行。改成纵向卡片后结论独占整行宽度。 */
+.fund-records {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--c-border);
+  gap: 8px;
 }
-.fund-history-row {
-  display: grid;
-  grid-template-columns: 84px auto 1fr;
+.fund-record {
+  padding: 10px 12px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface-2);
+  animation: fund-rise 0.4s var(--ease) backwards;
+  transition: border-color 0.2s var(--ease);
+}
+.fund-record:hover {
+  border-color: color-mix(in srgb, var(--c-accent) 30%, var(--c-border));
+}
+.fund-record-head {
+  display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.fund-record-date {
   font-size: 12px;
+  color: var(--c-text-dim);
+}
+.fund-record-act { margin-left: auto; }
+.fund-record-state {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--c-text-faint);
+}
+.fund-record-state.is-done { color: var(--c-success); }
+.fund-record-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--c-text-faint);
+}
+.fund-record-summary {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--c-text-dim);
 }
 .fund-form {
   border-top: 1px solid var(--c-border);
@@ -1426,6 +1461,8 @@ table.data tbody tr:hover {
   animation: modal-in 0.26s var(--ease);
   overflow: hidden;
 }
+/* 内容里有走势图或宽表格时加宽一档，能少滚一段 */
+.modal.wide { width: min(880px, 100%); }
 @keyframes modal-in {
   from { opacity: 0; transform: translateY(14px) scale(0.98); }
   to { opacity: 1; transform: none; }
@@ -2007,8 +2044,10 @@ table.data tbody tr:hover {
   .cal-cell { padding: 4px 1px 3px; }
 
   .fund-metrics { grid-template-columns: repeat(2, 1fr); }
-  .fund-history-row { grid-template-columns: 76px auto; }
-  .fund-history-row > span:last-child { grid-column: 1 / -1; }
+  /* 记录卡片在窄屏里：金额与执行按钮换行后仍能对齐 */
+  .fund-record-head { gap: 6px; }
+  .fund-record-act,
+  .fund-record-state { margin-left: 0; }
 
   .modal-backdrop { padding: 10px; place-items: end center; }
   .modal {

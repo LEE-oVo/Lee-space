@@ -99,13 +99,15 @@ export function FundDetailModal({ code, name, holding, advice, position, canDeta
 
   return (
     <Modal
+      wide
       title={
         <span className="row" style={{ gap: 8 }}>
           <span>{name || code}</span>
           {advice && (
-            <span className={`pill fund-action ${ACTION_CLASS[advice.action]}`}>
-              {ACTION_LABEL[advice.action]}
-              {advice.amount ? ` ¥${advice.amount.toLocaleString('zh-CN')}` : ''}
+            <span className={`fund-chip ${ACTION_CLASS[advice.action]}`}>
+              <span className="fund-chip-dot" />
+              <span className="fund-chip-label">{ACTION_LABEL[advice.action]}</span>
+              {advice.amount ? <b className="mono fund-chip-amt">¥{advice.amount.toLocaleString('zh-CN')}</b> : null}
             </span>
           )}
         </span>
@@ -266,67 +268,68 @@ export function FundDetailModal({ code, name, holding, advice, position, canDeta
             ) : history.length === 0 ? (
               <span className="faint" style={{ fontSize: 12 }}>暂无记录</span>
             ) : (
-              <div className="table-wrap wide">
-                <table className="data">
-                  <thead>
-                    <tr>
-                      <th style={{ width: 96 }}>日期</th>
-                      <th style={{ width: 118 }}>操作</th>
-                      <th style={{ width: 96 }}>金额</th>
-                      <th style={{ width: 150 }}>结算</th>
-                      <th style={{ width: 96 }}>执行</th>
-                      <th>结论</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {history.map((h) => (
-                      <tr key={h.tradeDate}>
-                        <td className="mono" style={{ fontSize: 12 }}>{h.tradeDate}</td>
-                        <td>
-                          <span className={`pill sm ${ACTION_CLASS[h.action]}`}>
-                            {ACTION_LABEL[h.action]}
-                          </span>
-                        </td>
-                        <td className="mono">{h.amount ? `¥${h.amount.toLocaleString('zh-CN')}` : '—'}</td>
-                        <td className="faint" style={{ fontSize: 11 }}>
-                          {h.settled ? (
-                            h.settledShares ? (
-                              <>
-                                净值 {h.settledNav?.toFixed(4)}
-                                {' · '}
-                                {h.settledShares} 份
-                                {h.settledFee ? ` · 费 ${h.settledFee.toFixed(2)}` : ''}
-                              </>
-                            ) : (
-                              '无需结算'
-                            )
-                          ) : h.executed ? (
-                            <span className="fund-pending">待结算</span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td>
-                          {h.amount && canManage ? (
-                            <button
-                              className={`btn sm${h.executed ? ' primary' : ''}`}
-                              onClick={() => void toggleExecuted(h)}
-                              title={h.executed ? '点一下取消「已执行」' : '标记为已执行'}
-                            >
-                              {h.executed ? <Icon name="check" size={12} /> : <Icon name="plus" size={12} />}
-                              {h.executed ? '已执行' : '未执行'}
-                            </button>
-                          ) : (
-                            <span className="faint" style={{ fontSize: 12 }}>
-                              {h.amount ? (h.executed ? '已执行' : '未执行') : '—'}
-                            </span>
-                          )}
-                        </td>
-                        <td className="faint" style={{ fontSize: 12 }}>{h.summary || '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="fund-records">
+                {history.map((h, i) => (
+                  <div
+                    className="fund-record"
+                    key={h.tradeDate}
+                    style={{ animationDelay: `${Math.min(i, 8) * 45}ms` }}
+                  >
+                    <div className="fund-record-head">
+                      <span className="mono fund-record-date">{h.tradeDate}</span>
+                      <span className={`fund-chip ${ACTION_CLASS[h.action]}`}>
+                        <span className="fund-chip-dot" />
+                        <span className="fund-chip-label">{ACTION_LABEL[h.action]}</span>
+                        {h.amount ? (
+                          <b className="mono fund-chip-amt">¥{h.amount.toLocaleString('zh-CN')}</b>
+                        ) : null}
+                      </span>
+                      {h.amount && canManage ? (
+                        <button
+                          className={`btn sm fund-record-act${h.executed ? ' primary' : ''}`}
+                          onClick={() => void toggleExecuted(h)}
+                          title={h.executed ? '点一下取消「已执行」' : '标记为已执行'}
+                        >
+                          {h.executed ? <Icon name="check" size={12} /> : <Icon name="plus" size={12} />}
+                          {h.executed ? '已执行' : '未执行'}
+                        </button>
+                      ) : h.amount ? (
+                        <span className={`fund-record-state${h.executed ? ' is-done' : ''}`}>
+                          {h.executed ? '已执行' : '未执行'}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div className="fund-record-meta">
+                      {h.settled ? (
+                        h.settledShares ? (
+                          <>
+                            <span>已结算 · 净值 {(h.settledNav ?? 0).toFixed(4)}</span>
+                            <span>{h.settledShares} 份</span>
+                            {h.settledFee ? <span>费用 ¥{h.settledFee.toFixed(2)}</span> : null}
+                            {h.settledRealized != null ? (
+                              <span>
+                                已实现{' '}
+                                <b className={h.settledRealized >= 0 ? 'up' : 'down'}>
+                                  {h.settledRealized >= 0 ? '+' : ''}
+                                  {h.settledRealized.toFixed(2)}
+                                </b>
+                              </span>
+                            ) : null}
+                          </>
+                        ) : (
+                          <span>无需结算</span>
+                        )
+                      ) : h.executed ? (
+                        <span className="fund-pending">待结算（等收盘净值）</span>
+                      ) : (
+                        <span>未执行，不用结算</span>
+                      )}
+                    </div>
+
+                    {h.summary && <div className="fund-record-summary">{h.summary}</div>}
+                  </div>
+                ))}
               </div>
             )}
             <div className="faint" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.7 }}>

@@ -7,9 +7,11 @@ interface Props {
   subtitle?: ReactNode;
   onClose: () => void;
   children: ReactNode;
+  /** 内容里有宽表格或图表时用，比默认宽一档 */
+  wide?: boolean;
 }
 
-export function Modal({ title, subtitle, onClose, children }: Props) {
+export function Modal({ title, subtitle, onClose, children, wide = false }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -26,7 +28,7 @@ export function Modal({ title, subtitle, onClose, children }: Props) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
-        className="modal"
+        className={`modal${wide ? ' wide' : ''}`}
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
