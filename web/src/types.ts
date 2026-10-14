@@ -111,9 +111,13 @@ export interface FundSource {
   url: string;
 }
 
+/** 建议的产出方：两个工具各写各的判断，账本只有一份 */
+export type FundAdviceSource = 'workbuddy' | 'trae' | 'manual';
+
 export interface FundAdvice {
   code: string;
   tradeDate: string;
+  source: FundAdviceSource | string;
   action: FundAction;
   confidence: string | null;
   /** 建议金额（元），非负；方向由 action 决定。hold 时为 null */
@@ -137,15 +141,27 @@ export interface FundAdvice {
   sources: FundSource[];
   stale: boolean;
   model: string | null;
+  /** 实际把这笔写进账本的工具（角色分离时可据此看出是谁结算的） */
+  settledSource: string | null;
   updatedAt: number;
 }
 
 export interface FundDaily {
   tradeDate: string;
+  source: string;
+  sourceLabel: string;
   summary: string;
   market: string;
   model: string | null;
   updatedAt: number;
+}
+
+/** 库里实际存在哪些来源，前端据此决定要不要显示来源切换 */
+export interface FundSourceInfo {
+  source: string;
+  label: string;
+  count: number;
+  lastDate: string | null;
 }
 
 export interface FundNavPoint {
@@ -176,10 +192,17 @@ export interface FundPosition {
 
 export interface FundOverview {
   daily: FundDaily | null;
+  /** 每个来源各自最新一天的整体结论，页面切来源时跟着换 */
+  dailyBySource: FundDaily[];
   holdings: FundHolding[];
+  /** 不指定来源时是「每只基金 × 每个来源」各自的最新一条 */
   advice: FundAdvice[];
   /** 结算后的持仓（含金额，仅 fund:detail 可见） */
   positions: Record<string, FundPosition>;
+  sources: FundSourceInfo[];
+  sourceLabels: Record<string, string>;
+  /** 允许写账本的来源；非空时其他来源只能出建议 */
+  settleSources: string[];
   /** public = 未授权 fund:detail，持仓金额与详细分析已被服务端裁掉 */
   scope: 'full' | 'public';
 }

@@ -71,20 +71,54 @@ export function denyGuest(req, res, next) {
   next();
 }
 
+function bearerMatches(header, token) {
+  if (!token) return false;
+  const given = Buffer.from(String(header).trim());
+  const expect = Buffer.from(token);
+  if (given.length !== expect.length) return false;
+  return timingSafeEqual(given, expect);
+}
+
 // 基金建议写入：使用独立令牌而不是登录会话。
 // 令牌只授予「写建议 + 读持仓」，即使泄露也无法操作服务器或访问其他接口。
+//
+// 双工具隔离的关键：来源由「用哪个令牌」唯一决定，不接受任务里自报 source。
+// 这样即使某个模型的提示词被改坏或串了，也不会把别人的建议写进别人的格子。
+// 主令牌 → workbuddy；Trae 专用令牌 → trae。
 export function requireFundIngest(req, res, next) {
-  if (!config.fundIngestToken) {
+  const configured = [config.fundIngestToken, config.fundIngestTokenTrae].filter(Boolean);
+  if (!configured.length) {
     return res.status(503).json({ error: '服务端未配置 FUND_INGEST_TOKEN，写入接口已关闭' });
   }
+
   const header = String(req.headers.authorization || '');
   if (!header.startsWith('Bearer ')) {
     return res.status(401).json({ error: '缺少 Bearer 令牌' });
   }
-  const given = Buffer.from(header.slice(7).trim());
-  const expect = Buffer.from(config.fundIngestToken);
-  if (given.length !== expect.length || !timingSafeEqual(given, expect)) {
-    return res.status(401).json({ error: '令牌无效' });
+  const presented = header.slice(7).trim();
+  if (!presented) return res.status(401).json({ error: '缺少 Bearer 令牌' });
+
+  if (bearerMatches(presented, config.fundIngestTokenTrae)) {
+    req.fundSource = 'trae';
+    return next();
+  }
+  if (bearerMatches(presented, config.fundIngestToken)) {
+    req.fundSource = 'workbuddy';
+    return next();
+  }
+  return res.status(401).json({ error: '令牌无效' });
+}
+
+// 账本写入（结算）比写建议更危险：会真的改份额和成本。
+// 在令牌之外再加一层来源白名单，用于「角色分离」——
+// 例如 FUND_SETTLE_SOURCES=trae 时，WorkBuddy 的令牌只能投建议、动不了账本。
+export function requireFundSettle(req, res, next) {
+  const allow = config.fundSettleSources;
+  if (allow.length && !allow.includes(req.fundSource)) {
+    return res.status(403).json({
+      error: `当前来源（${req.fundSource || '未知'}）无账本写入权限`,
+      allowedSources: allow,
+    });
   }
   next();
 }

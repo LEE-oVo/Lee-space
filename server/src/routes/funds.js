@@ -1,17 +1,20 @@
 import { Router } from 'express';
-import { requirePermission, denyGuest, requireFundIngest, clientIp, hasPermission } from '../middleware/auth.js';
+import { requirePermission, denyGuest, requireFundIngest, requireFundSettle, clientIp, hasPermission } from '../middleware/auth.js';
 import { writeAudit } from '../db/repo.js';
 import { config } from '../config.js';
 import { holdingView, pendingSettlements, settleDay, updateFees } from '../services/position.js';
 import {
   FUND_ACTIONS,
   FUND_CONFIDENCE,
+  SOURCE_LABELS,
   adviceHistory,
+  adviceSources,
   createHolding,
   deleteHolding,
   ingestAdvice,
   latestAdvice,
   latestDaily,
+  latestDailyList,
   listHoldings,
   navSeries,
   positionSummary,
@@ -32,7 +35,8 @@ const AMOUNT_RULES = {
   scope: 'daily-total',
   dailyTotal: config.fundDailyAddBudget,
   note: `买入/加仓金额必须是整百；所有基金当日加仓合计不超过 ${config.fundDailyAddBudget} 元`
-    + '（是每日总预算，不是每只各这么多）。仅在明确判断为机会时才可突破，且需在 reason 说明理由',
+    + '（是每日总预算，不是每只各这么多）。两个工具共用同一个额度池，先到先得，'
+    + '额度不够时服务端会自动削减或改为持有，并在 reason 里注明',
 };
 
 /** 服务器按北京时间取当天日期，避免 UTC 跨日错位 */
@@ -48,15 +52,22 @@ router.get('/', requirePermission('fund:view'), (req, res) => {
   // 这条不变量放在服务端，不依赖配置正确
   const detail = hasPermission(req.user, 'fund:detail') && !req.user.isGuest;
   const holdings = listHoldings();
+  // 不传 source：返回「每只基金 × 每个来源」各自的最新一条，页面自己做切换与冲突对比
   const advice = latestAdvice();
   res.json({
     daily: latestDaily(),
+    // 每个来源各自的整体结论，页面切到哪个来源就显示哪份
+    dailyBySource: latestDailyList(),
     holdings: detail ? holdings : holdings.map(publicHolding),
     advice: detail ? advice : advice.map(publicAdvice),
     // 结算后的真实持仓：份额 / 成本 / 市值 / 浮动盈亏 / 已实现盈亏（含金额，仅 detail）
     positions: detail
       ? Object.fromEntries(holdings.map((h) => [h.code, holdingView(h.code)]))
       : {},
+    // 库里实际有哪些来源：只有一个来源时页面不显示切换器
+    sources: adviceSources(),
+    sourceLabels: SOURCE_LABELS,
+    settleSources: config.fundSettleSources,
     scope: detail ? 'full' : 'public',
   });
 });
@@ -76,19 +87,25 @@ router.get('/history', requirePermission('fund:view'), (req, res) => {
   if (!detail) {
     return res.status(403).json({ error: '当前角色不能查看详细分析' });
   }
-  res.json({ history: adviceHistory(code, Number(req.query.limit) || 10) });
+  const source = String(req.query.source || '').trim() || null;
+  res.json({ history: adviceHistory(code, Number(req.query.limit) || 10, source) });
 });
 
 // 持仓列表：给定时任务读取用（用令牌而不是会话），这样新增基金不必改任务配置。
 // 附带每只基金最近的加减仓记录，让模型能看到自己过去的判断与实际执行情况。
 router.get('/holdings', requireFundIngest, (req, res) => {
+  const date = String(req.query.date || todayStr());
   res.json({
+    // 告诉任务服务端把它判成了哪个来源：任务侧不用再自己声明，也不该自己声明
+    source: req.fundSource,
     holdings: holdingsForAutomation(Number(req.query.limit) || 12),
     // 结算后的真实持仓，让模型知道当前份额与成本
     positions: Object.fromEntries(listHoldings().map((h) => [h.code, holdingView(h.code)])),
     amountRules: AMOUNT_RULES,
-    // 当天已经分配出去的加仓额度，模型据此在预算内分配
-    todayAllocation: todayAllocation(String(req.query.date || todayStr())),
+    // 当天共享额度池的占用情况，模型据此在预算内分配
+    todayAllocation: todayAllocation(date),
+    // 本来源能不能写账本（角色分离时 WorkBuddy 只能出建议）
+    canSettle: config.fundSettleSources.length === 0 || config.fundSettleSources.includes(req.fundSource),
   });
 });
 
@@ -98,16 +115,18 @@ router.get('/pending', requireFundIngest, (_req, res) => {
   res.json({
     pending: rows.map((r) => ({
       code: r.code,
-      date: r.trade_date,
+      date: r.date,
       action: r.action,
       amount: r.amount,
+      source: r.source,
     })),
     count: rows.length,
   });
 });
 
 // 结算任务的第二步：带上真实净值回来入账（幂等，只处理 settled=0）
-router.post('/settle', requireFundIngest, (req, res) => {
+// 比写建议多一层来源白名单：FUND_SETTLE_SOURCES=trae 时 WorkBuddy 的令牌只能投建议
+router.post('/settle', requireFundIngest, requireFundSettle, (req, res) => {
   const tradeDate = String(req.body?.tradeDate || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) {
     return res.status(400).json({ error: 'tradeDate 格式应为 YYYY-MM-DD' });
@@ -133,7 +152,8 @@ router.post('/settle', requireFundIngest, (req, res) => {
     }
   }
 
-  const result = settleDay(tradeDate, navs);
+  // 同一基金同一天多来源并存时只入账优先级最高的那条，其余标记为 deduped
+  const result = settleDay(tradeDate, navs, req.fundSource);
   return res.json({ ok: true, ...result });
 });
 
@@ -193,7 +213,9 @@ router.patch('/executed', requirePermission('fund:manage'), denyGuest, (req, res
   const tradeDate = String(req.body?.tradeDate || '').trim();
   if (!CODE_RE.test(code)) return res.status(400).json({ error: '基金代码非法' });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) return res.status(400).json({ error: '日期格式应为 YYYY-MM-DD' });
-  if (!setAdviceExecuted(code, tradeDate, Boolean(req.body?.executed))) {
+  // 可选：只切换某个来源的记录；不给就按整天的执行状态一起改
+  const source = String(req.body?.source || '').trim() || null;
+  if (!setAdviceExecuted(code, tradeDate, Boolean(req.body?.executed), source)) {
     return res.status(404).json({ error: '记录不存在' });
   }
   writeAudit({
@@ -201,7 +223,8 @@ router.patch('/executed', requirePermission('fund:manage'), denyGuest, (req, res
     username: req.user?.username ?? null,
     action: 'fund.record.executed',
     target: `${code}@${tradeDate}`,
-    detail: req.body?.executed ? '已执行' : '取消执行',
+    // executed 是账本语义，同一天所有来源会一起改，日志里注明是哪条触发的
+    detail: `${req.body?.executed ? '已执行' : '取消执行'}${source ? `（${SOURCE_LABELS[source] || source}）` : ''}`,
     ip: clientIp(req),
   });
   return res.json({ ok: true, summary: positionSummary(code) });
@@ -253,9 +276,10 @@ router.delete('/holdings/:id', requirePermission('fund:manage'), denyGuest, (req
   return res.json({ ok: true });
 });
 
-// 定时任务写入：强校验，任何一条不合法整批拒绝
+// 定时任务写入：强校验，任何一条不合法整批拒绝。
+// 来源只认令牌——body 里就算带了 source 也一律忽略，避免提示词被改坏后串格子
 router.post('/ingest', requireFundIngest, (req, res) => {
-  const result = ingestAdvice(req.body);
+  const result = ingestAdvice(req.body, { source: req.fundSource });
   if (!result.ok) {
     return res.status(400).json({ ok: false, error: '数据校验失败', details: result.errors });
   }
@@ -263,6 +287,9 @@ router.post('/ingest', requireFundIngest, (req, res) => {
     ok: true,
     accepted: result.accepted,
     tradeDate: result.tradeDate,
+    source: result.source,
+    // 被额度拦截而削减/改持有的条目，任务日志里要能看到
+    budget: result.budget,
     actions: FUND_ACTIONS,
     confidence: FUND_CONFIDENCE,
     amountRules: AMOUNT_RULES,

@@ -1,4 +1,5 @@
 import { getDb } from '../db/index.js';
+import { sourceRank } from './fundSource.js';
 
 // 持仓结算：把「已执行的操作」用真实收盘净值换算成份额与费用。
 // 管理费/托管费/销售服务费已经每日从净值里计提，这里不重复计算，
@@ -211,30 +212,70 @@ export function pendingSettlements() {
         WHERE executed = 1 AND settled = 0
         ORDER BY trade_date, id`
     )
-    .all();
+    .all()
+    .map((r) => ({
+      code: r.code,
+      date: r.trade_date,
+      action: r.action,
+      amount: r.amount,
+      source: r.source || 'workbuddy',
+    }));
 }
 
 /**
  * 结算某一天（幂等：只处理 settled=0 的记录）。
  * navMap 由定时任务提供 {code: nav}；拿不到净值的记录保持待结算，等次日补。
+ *
+ * settledBy 记录「是谁调用结算的」，用于角色分离后的审计；去重只认 settledBy 之外
+ * 的优先级，保证两只工具不会各写一遍账本。
  */
-export function settleDay(tradeDate, navMap = {}) {
+export function settleDay(tradeDate, navMap = {}, settledBy = null) {
   const db = getDb();
   const rows = db
     .prepare(`SELECT * FROM fund_advice WHERE executed = 1 AND settled = 0 AND trade_date <= ? ORDER BY trade_date, id`)
     .all(tradeDate);
 
+  // 同一基金同一天只入账一条：多来源并存时取优先级最高的那条，其余标记 deduped。
+  // 少了这一步，两只工具各建议一次加仓就会各入账一次，份额直接翻倍——
+  // 这是整个模块最容易出、也最难发现的一类事故
+  const winnerByKey = new Map();
+  for (const row of rows) {
+    const key = `${row.code}|${row.trade_date}`;
+    const cur = winnerByKey.get(key);
+    if (!cur || sourceRank(row.source) < sourceRank(cur.source)) winnerByKey.set(key, row);
+  }
+  const winnerIds = new Set([...winnerByKey.values()].map((r) => r.id));
+
   const done = [];
   const pending = [];
+  const skipped = [];
   const mark = db.prepare(
     `UPDATE fund_advice
         SET settled = 1, settled_nav = ?, settled_shares = ?, settled_fee = ?,
-            settled_amount = ?, settled_realized = ?, updated_at = ?
+            settled_amount = ?, settled_realized = ?, settled_source = ?, updated_at = ?
       WHERE id = ?`
+  );
+  // 落选的记录也要置 settled=1，否则明天会被再挑一次、又入账一遍
+  const markDeduped = db.prepare(
+    `UPDATE fund_advice SET settled = 1, settled_source = 'deduped', updated_at = ? WHERE id = ?`
   );
 
   const run = db.transaction(() => {
     for (const row of rows) {
+      const key = `${row.code}|${row.trade_date}`;
+      if (!winnerIds.has(row.id)) {
+        const winner = winnerByKey.get(key);
+        skipped.push({
+          code: row.code,
+          date: row.trade_date,
+          action: row.action,
+          source: row.source || 'workbuddy',
+          reason: `同一天已有更高优先级的建议（${winner.source || 'workbuddy'}）入账，本条只保留为参考`,
+        });
+        markDeduped.run(now(), row.id);
+        continue;
+      }
+
       // 老持仓先补 initial lot，才能 FIFO
       const holding = getHolding(row.code);
       if (holding) ensureInitialLot(holding);
@@ -251,7 +292,7 @@ export function settleDay(tradeDate, navMap = {}) {
       recordNav(row.code, row.trade_date, nav);
 
       if (row.action === 'hold' || !row.amount) {
-        mark.run(nav, null, null, null, null, now(), row.id);
+        mark.run(nav, null, null, null, null, settledBy, now(), row.id);
         done.push({ code: row.code, date: row.trade_date, action: row.action, settled: 'no-op' });
         continue;
       }
@@ -263,9 +304,9 @@ export function settleDay(tradeDate, navMap = {}) {
           nav,
           amount: row.amount,
           feePct: holding?.purchase_fee || 0,
-          source: 'advice',
+          source: row.source === 'manual' ? 'manual' : 'advice',
         });
-        mark.run(nav, r.shares, r.fee, row.amount, null, now(), row.id);
+        mark.run(nav, r.shares, r.fee, row.amount, null, settledBy, now(), row.id);
         syncHolding(row.code);
         done.push({
           code: row.code, date: row.trade_date, action: row.action, nav,
@@ -279,7 +320,7 @@ export function settleDay(tradeDate, navMap = {}) {
       const r = settleSell({ code: row.code, date: row.trade_date, nav, amount: row.amount, feeRules: rules });
       db.prepare(`UPDATE fund_holdings SET realized = COALESCE(realized, 0) + ? WHERE code = ?`)
         .run(r.realized, row.code);
-      mark.run(nav, r.shares, r.fee, row.amount, r.realized, now(), row.id);
+      mark.run(nav, r.shares, r.fee, row.amount, r.realized, settledBy, now(), row.id);
       syncHolding(row.code);
       done.push({
         code: row.code, date: row.trade_date, action: row.action, nav,
@@ -290,7 +331,7 @@ export function settleDay(tradeDate, navMap = {}) {
   });
   run();
 
-  return { tradeDate, settled: done, pending };
+  return { tradeDate, settledBy: settledBy || null, settled: done, pending, skipped };
 }
 
 function syncCost(code) {

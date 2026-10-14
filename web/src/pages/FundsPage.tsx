@@ -35,6 +35,21 @@ const ACTION_ACTIVE: Record<FundAction, boolean> = {
   sell: true,
 };
 
+// 入账优先级，必须与服务端 FUND_SETTLE_PRIORITY 保持一致：
+// 「合并」视图里用同一套规则挑出主建议，否则页面显示的和真正入账的会不是同一条
+const SOURCE_PRIORITY: Record<string, number> = { manual: 0, trae: 1, workbuddy: 2 };
+
+function sourceRank(source: string) {
+  return SOURCE_PRIORITY[source] ?? 9;
+}
+
+/** 判断方向：加仓 in / 减仓 out / 持有 flat。方向不同才算「分歧」 */
+function directionOf(action: FundAction) {
+  if (action === 'buy' || action === 'add') return 'in';
+  if (action === 'hold') return 'flat';
+  return 'out';
+}
+
 function pctText(value: number | null | undefined) {
   if (value === null || value === undefined) return '—';
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
@@ -56,6 +71,7 @@ interface DetailTarget {
   holding: FundHolding | null;
   advice: FundAdvice | undefined;
   position: FundPosition | undefined;
+  source: string;
 }
 
 export function FundsPage() {
@@ -71,6 +87,7 @@ export function FundsPage() {
   const [series, setSeries] = useState<Record<string, FundNavPoint[]>>({});
   const [detail, setDetail] = useState<DetailTarget | null>(null);
   const [expandSummary, setExpandSummary] = useState(false);
+  const [source, setSource] = useState<string>('all');
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -121,17 +138,49 @@ export function FundsPage() {
   if (error) return <div className="alert error">{error}</div>;
   if (!data) return null;
 
-  const adviceByCode = new Map(data.advice.map((a) => [a.code, a]));
-  const knownCodes = new Set(data.holdings.map((h) => h.code));
-  const extras = data.advice.filter((a) => !knownCodes.has(a.code));
+  const sourceLabels: Record<string, string> = data.sourceLabels || {};
+  const labelOf = (s: string) => sourceLabels[s] || s;
+  // 只有一个来源时不显示切换器，页面跟以前完全一样
+  const sourceTabs = (data.sources || []).length > 1
+    ? [{ source: 'all', label: '合并' }, ...(data.sources || []).map((s) => ({ source: s.source, label: s.label }))]
+    : [];
+  // 切了来源但那个来源还没数据时的兜底：退回合并视图的口径，不留空白页
+  const settleNote = (data.settleSources || []).length === 1
+    ? `账本仅 ${labelOf(data.settleSources[0])} 可写`
+    : '';
 
-  function renderCard(holding: FundHolding | null, advice: FundAdvice | undefined, index: number) {
-    const code = holding?.code || advice?.code || '';
+  // 按来源过滤后按基金分组，「合并」视图下每只基金可能有多条（各来源一条）
+  const grouped = new Map<string, FundAdvice[]>();
+  for (const a of data.advice || []) {
+    if (source !== 'all' && a.source !== source) continue;
+    const list = grouped.get(a.code) || [];
+    list.push(a);
+    grouped.set(a.code, list);
+  }
+  for (const list of grouped.values()) {
+    list.sort((x, y) => sourceRank(x.source) - sourceRank(y.source));
+  }
+  const allOf = (code: string) => grouped.get(code) || [];
+
+  const knownCodes = new Set(data.holdings.map((h) => h.code));
+  const extras = [...grouped.keys()].filter((c) => !knownCodes.has(c));
+
+  const dailies = data.dailyBySource || [];
+  const activeDaily = source === 'all'
+    ? data.daily
+    : dailies.find((d) => d.source === source) || data.daily;
+
+  function renderCard(code: string, holding: FundHolding | null, index: number) {
+    const all = allOf(code);
+    const advice = all[0];
     const name = holding?.name || advice?.summary || code;
     const price = advice?.estimate ?? advice?.nav ?? null;
     const profitPct = canDetail ? profit(holding?.cost ?? null, price) : null;
     const pos = positions[code];
     const pts = series[code];
+    // 同一天两只工具方向相反 → 明确标出来，别让用户自己去两条记录里对
+    const conflict = all.length > 1
+      && new Set(all.map((a) => directionOf(a.action))).size > 1;
 
     return (
       <div
@@ -169,6 +218,12 @@ export function FundsPage() {
               <span className="fund-tag is-warn">
                 <Icon name="clock" size={11} />
                 待结算
+              </span>
+            )}
+            {/* 合并视图下标出主建议是谁给的；单来源时不显示，避免多余噪音 */}
+            {source === 'all' && advice && sourceTabs.length > 0 && (
+              <span className="fund-src-badge" data-source={advice.source}>
+                {labelOf(advice.source)}
               </span>
             )}
           </div>
@@ -233,6 +288,31 @@ export function FundsPage() {
           </div>
         )}
 
+        {conflict && (
+          <div className="fund-conflict">
+            <span className="fund-conflict-icon">
+              <Icon name="alert" size={12} />
+            </span>
+            <div className="fund-conflict-body">
+              <div className="fund-conflict-title">两只工具判断不一致</div>
+              <div className="fund-conflict-rows">
+                {all.map((a) => (
+                  <div className="fund-conflict-row" key={a.source}>
+                    <span className="fund-src-badge" data-source={a.source}>{labelOf(a.source)}</span>
+                    <span className={`fund-conflict-act ${directionOf(a.action)}`}>
+                      {ACTION_LABEL[a.action]}
+                      {a.amount ? ` ¥${a.amount.toLocaleString('zh-CN')}` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="fund-conflict-foot">
+                入账时只认{labelOf(all[0].source)}的这条——账本只有一本，不会两只都算
+              </div>
+            </div>
+          </div>
+        )}
+
         {advice?.summary && <div className="fund-oneline">{advice.summary}</div>}
 
         {pts && pts.length > 1 && (
@@ -244,7 +324,9 @@ export function FundsPage() {
         <div className="fund-foot">
           <button
             className="btn sm fund-detail-btn"
-            onClick={() => setDetail({ code, name, holding, advice, position: positions[code] })}
+            onClick={() =>
+              setDetail({ code, name, holding, advice, position: positions[code], source })
+            }
           >
             <Icon name="chart" size={13} />
             {canDetail ? '查看详情' : '查看走势'}
@@ -273,7 +355,7 @@ export function FundsPage() {
             {data.daily?.tradeDate && (
               <span className="fund-live">
                 <span className="dot live" />
-                {data.daily.tradeDate}
+                {activeDaily?.tradeDate || data.daily.tradeDate}
               </span>
             )}
           </div>
@@ -297,12 +379,30 @@ export function FundsPage() {
           </div>
         </div>
 
-        {data.daily?.summary ? (
+        {sourceTabs.length > 0 && (
+          <div className="fund-source-tabs" role="tablist" aria-label="建议来源">
+            {sourceTabs.map((t) => (
+              <button
+                key={t.source}
+                role="tab"
+                aria-selected={source === t.source}
+                className={`fund-source-tab${source === t.source ? ' is-on' : ''}`}
+                onClick={() => setSource(t.source)}
+              >
+                {t.label}
+              </button>
+            ))}
+            {settleNote && <span className="fund-source-note">{settleNote}</span>}
+          </div>
+        )}
+
+        {activeDaily?.summary ? (
           <>
-            <div className={`fund-market${expandSummary ? '' : ' clamp'}`}>{data.daily.summary}</div>
+            <div className={`fund-market${expandSummary ? '' : ' clamp'}`}>{activeDaily.summary}</div>
             <div className="row" style={{ justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
               <span className="faint" style={{ fontSize: 12 }}>
-                由定时任务调用大模型生成 · {formatRelative(data.daily.updatedAt)}
+                {sourceTabs.length > 0 ? `${labelOf(activeDaily.source || 'workbuddy')} · ` : ''}
+                由定时任务调用大模型生成 · {formatRelative(activeDaily.updatedAt)}
               </span>
               <button className="btn ghost sm" onClick={() => setExpandSummary((v) => !v)}>
                 {expandSummary ? '收起' : '展开全文'}
@@ -311,16 +411,23 @@ export function FundsPage() {
           </>
         ) : (
           <div className="fund-empty">
-            还没有分析数据。定时任务会在<b>工作日 14:30</b> 自动运行，
-            抓取行情后由大模型给出操作建议并推送到工作台。
-            {canManage && ' 也可以先到「持仓配置」录入你的基金。'}
+            {source === 'all'
+              ? '还没有分析数据。定时任务会在'
+              : `${labelOf(source)} 还没有投过建议。它自己的定时任务跑完后这里就会出现，`}
+            {source === 'all' && (
+              <>
+                <b>工作日 14:30</b> 自动运行，
+                抓取行情后由大模型给出操作建议并推送到工作台。
+              </>
+            )}
+            {canManage && source === 'all' && ' 也可以先到「持仓配置」录入你的基金。'}
           </div>
         )}
       </div>
 
       {data.holdings.length > 0 ? (
         <div className="grid cols-3 mb-12">
-          {data.holdings.map((h, i) => renderCard(h, adviceByCode.get(h.code), i))}
+          {data.holdings.map((h, i) => renderCard(h.code, h, i))}
         </div>
       ) : (
         !data.daily && (
@@ -339,7 +446,7 @@ export function FundsPage() {
             以下基金有建议但未录入持仓（可能已清仓）：
           </div>
           <div className="grid cols-3 mb-12">
-            {extras.map((a, i) => renderCard(null, a, i + data.holdings.length))}
+            {extras.map((code, i) => renderCard(code, null, i + data.holdings.length))}
           </div>
         </>
       )}
@@ -358,6 +465,7 @@ export function FundsPage() {
           position={detail.position}
           canDetail={canDetail}
           canManage={canManage}
+          source={detail.source}
           onClose={() => setDetail(null)}
         />
       )}

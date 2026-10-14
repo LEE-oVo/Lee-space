@@ -1373,6 +1373,118 @@ table.data tbody tr:hover {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* ---------- 来源切换：两个工具的建议分开看 ---------- */
+.fund-source-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--c-border);
+}
+.fund-source-tab {
+  appearance: none;
+  border: 1px solid var(--c-border);
+  background: transparent;
+  color: var(--c-text-dim);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 4px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.18s var(--ease), border-color 0.18s var(--ease),
+    background-color 0.18s var(--ease), transform 0.18s var(--ease);
+}
+.fund-source-tab:hover {
+  color: var(--c-text);
+  border-color: var(--c-border-strong);
+}
+.fund-source-tab:active { transform: scale(0.97); }
+.fund-source-tab.is-on {
+  color: var(--c-accent-contrast);
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+  font-weight: 500;
+}
+.fund-source-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--c-text-faint);
+  white-space: nowrap;
+}
+
+/* ---------- 来源徽标：一眼看出这条建议出自哪个工具 ---------- */
+.fund-src-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--c-accent);
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.fund-src-badge[data-source='trae'] { color: var(--c-accent-2); }
+.fund-src-badge[data-source='manual'] { color: var(--c-success); }
+
+/* ---------- 分歧提示：两只工具方向相反 ---------- */
+.fund-conflict {
+  display: flex;
+  gap: 9px;
+  margin-top: 10px;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--c-warning);
+  border: 1px solid color-mix(in srgb, var(--c-warning) 32%, transparent);
+  background: color-mix(in srgb, var(--c-warning) 10%, transparent);
+  animation: fund-rise 0.4s var(--ease) backwards;
+}
+.fund-conflict-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  opacity: 0.9;
+}
+.fund-conflict-body { min-width: 0; }
+.fund-conflict-title { font-weight: 500; }
+.fund-conflict-rows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 5px;
+}
+.fund-conflict-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.fund-conflict-act {
+  font-weight: 500;
+  color: var(--c-text);
+}
+.fund-conflict-act.in { color: var(--c-danger); }
+.fund-conflict-act.out { color: var(--c-success); }
+.fund-conflict-act.flat { color: var(--c-text-dim); }
+.fund-conflict-foot {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--c-text-faint);
+}
+
+/* 同一天被更高优先级建议顶掉的那条：说明清楚，别让人以为漏结算了 */
+.fund-record-dup {
+  color: var(--c-text-faint);
+  font-style: normal;
+}
 .fee-rules {
   display: flex;
   flex-direction: column;

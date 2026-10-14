@@ -26,6 +26,7 @@ export function migrate(database) {
   database.exec(fs.readFileSync(SCHEMA_PATH, 'utf8'));
   ensureFundAdviceColumns(database);
   ensureFundHoldingColumns(database);
+  ensureFundDailySource(database);
   seedBaseline(database);
 }
 
@@ -50,6 +51,66 @@ function ensureFundAdviceColumns(database) {
   addColumn(database, 'fund_advice', 'settled_fee', 'settled_fee REAL');
   addColumn(database, 'fund_advice', 'settled_amount', 'settled_amount REAL');
   addColumn(database, 'fund_advice', 'settled_realized', 'settled_realized REAL');
+  addColumn(database, 'fund_advice', 'source', "source TEXT NOT NULL DEFAULT 'workbuddy'");
+  addColumn(database, 'fund_advice', 'settled_source', 'settled_source TEXT');
+
+  // 唯一键从 (code, trade_date) 扩成 (code, trade_date, source)。
+  // 老索引同名但定义不同，CREATE IF NOT EXISTS 会直接跳过，必须先 DROP 再建
+  const idx = database
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_fund_advice_unique'`)
+    .get();
+  if (!idx || !String(idx.sql || '').includes('source')) {
+    database.exec(`DROP INDEX IF EXISTS idx_fund_advice_unique`);
+    database.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_fund_advice_unique ON fund_advice(code, trade_date, source)`
+    );
+  }
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_fund_advice_date_source ON fund_advice(trade_date, source)`
+  );
+}
+
+/**
+ * fund_daily 老库主键是 trade_date 单列，装不下「同一天两个来源各一份结论」。
+ * 这里补上 source 列并把主键扩成 (trade_date, source)。
+ * SQLite 改不了已有主键，只能建新表搬迁再改名——整个搬迁放在一个事务里，
+ * 中途失败会自动回滚，不会留下半张表。
+ */
+function ensureFundDailySource(database) {
+  addColumn(database, 'fund_daily', 'source', "source TEXT NOT NULL DEFAULT 'workbuddy'");
+
+  const cols = database.prepare(`PRAGMA table_info(fund_daily)`).all();
+  const pkCols = cols.filter((c) => c.pk > 0).map((c) => c.name);
+  const alreadyComposite = pkCols.length >= 2 && pkCols.includes('source');
+  if (alreadyComposite) return;
+
+  database.pragma('foreign_keys = OFF');
+  try {
+    database.transaction(() => {
+      database.exec(`DROP TABLE IF EXISTS fund_daily_new`);
+      database.exec(
+        `CREATE TABLE fund_daily_new (
+           trade_date TEXT NOT NULL,
+           source     TEXT NOT NULL DEFAULT 'workbuddy',
+           summary    TEXT,
+           market     TEXT,
+           model      TEXT,
+           created_at INTEGER NOT NULL,
+           updated_at INTEGER NOT NULL,
+           PRIMARY KEY (trade_date, source)
+         )`
+      );
+      database.exec(
+        `INSERT INTO fund_daily_new (trade_date, source, summary, market, model, created_at, updated_at)
+         SELECT trade_date, IFNULL(source, 'workbuddy'), summary, market, model, created_at, updated_at
+           FROM fund_daily`
+      );
+      database.exec(`DROP TABLE fund_daily`);
+      database.exec(`ALTER TABLE fund_daily_new RENAME TO fund_daily`);
+    })();
+  } finally {
+    database.pragma('foreign_keys = ON');
+  }
 }
 
 function ensureFundHoldingColumns(database) {

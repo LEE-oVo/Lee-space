@@ -28,6 +28,14 @@ const ACTION_CLASS: Record<FundAction, string> = {
   sell: 'act-sell',
 };
 
+// 与服务端 FUND_SETTLE_PRIORITY 一致：数字越小越优先入账
+const SOURCE_PRIORITY: Record<string, number> = { manual: 0, trae: 1, workbuddy: 2 };
+const SOURCE_LABEL: Record<string, string> = {
+  workbuddy: 'WorkBuddy',
+  trae: 'Trae Work',
+  manual: '手动补记',
+};
+
 interface Props {
   code: string;
   name: string;
@@ -36,12 +44,18 @@ interface Props {
   position: FundPosition | undefined;
   canDetail: boolean;
   canManage: boolean;
+  /** 页面当前选中的来源；'all' 时显示全部并标出每条来源 */
+  source: string;
   onClose: () => void;
 }
 
-export function FundDetailModal({ code, name, holding, advice, position, canDetail, canManage, onClose }: Props) {
+export function FundDetailModal({
+  code, name, holding, advice, position, canDetail, canManage, source, onClose,
+}: Props) {
   const [series, setSeries] = useState<FundNavPoint[] | null>(null);
   const [history, setHistory] = useState<FundAdvice[] | null>(null);
+  // 弹窗里的补记只写 manual 格子，不动两只工具各自的判断
+  const histSource = source === 'manual' ? 'all' : source;
   const [error, setError] = useState('');
   const [recording, setRecording] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -52,7 +66,9 @@ export function FundDetailModal({ code, name, holding, advice, position, canDeta
       try {
         const [s, h] = await Promise.all([
           api.fundSeries(code, 1000),
-          canDetail ? api.fundHistory(code, 10) : Promise.resolve({ history: [] as FundAdvice[] }),
+          canDetail
+            ? api.fundHistory(code, 20, histSource === 'all' ? undefined : histSource)
+            : Promise.resolve({ history: [] as FundAdvice[] }),
         ]);
         if (!alive) return;
         setSeries(s.series);
@@ -65,14 +81,22 @@ export function FundDetailModal({ code, name, holding, advice, position, canDeta
     return () => {
       alive = false;
     };
-  }, [code, canDetail, reloadKey]);
+  }, [code, canDetail, reloadKey, histSource]);
 
-  // 只统计「已执行」的记录，那才是真实发生的仓位变化
+  // 只统计「已执行」的记录，那才是真实发生的仓位变化。
+  // 同一天两个来源各有一条时只算入账优先级最高的那条，否则会把一笔操作算成两笔
   const totals = useMemo(() => {
     let added = 0;
     let reduced = 0;
     let count = 0;
+    const byDate = new Map<string, FundAdvice>();
     for (const h of history || []) {
+      const cur = byDate.get(h.tradeDate);
+      if (!cur || SOURCE_PRIORITY[String(h.source)] < SOURCE_PRIORITY[String(cur.source)]) {
+        byDate.set(h.tradeDate, h);
+      }
+    }
+    for (const h of byDate.values()) {
       if (!h.executed || !h.amount) continue;
       count += 1;
       if (h.action === 'buy' || h.action === 'add') added += h.amount;
@@ -83,9 +107,14 @@ export function FundDetailModal({ code, name, holding, advice, position, canDeta
 
   async function toggleExecuted(h: FundAdvice) {
     try {
-      await api.setAdviceExecuted(h.code, h.tradeDate, !h.executed);
+      // 带上来源：服务端会按「同一天所有来源一起改」处理，executed 是账本语义
+      await api.setAdviceExecuted(h.code, h.tradeDate, !h.executed, String(h.source));
       setHistory((prev) =>
-        prev ? prev.map((x) => (x.tradeDate === h.tradeDate ? { ...x, executed: !x.executed } : x)) : prev
+        prev
+          ? prev.map((x) =>
+              x.tradeDate === h.tradeDate ? { ...x, executed: !x.executed } : x
+            )
+          : prev
       );
     } catch {
       /* 标记失败不影响浏览 */
@@ -272,7 +301,7 @@ export function FundDetailModal({ code, name, holding, advice, position, canDeta
                 {history.map((h, i) => (
                   <div
                     className="fund-record"
-                    key={h.tradeDate}
+                    key={`${h.tradeDate}-${h.source}`}
                     style={{ animationDelay: `${Math.min(i, 8) * 45}ms` }}
                   >
                     <div className="fund-record-head">
@@ -283,6 +312,9 @@ export function FundDetailModal({ code, name, holding, advice, position, canDeta
                         {h.amount ? (
                           <b className="mono fund-chip-amt">¥{h.amount.toLocaleString('zh-CN')}</b>
                         ) : null}
+                      </span>
+                      <span className="fund-src-badge" data-source={String(h.source)}>
+                        {SOURCE_LABEL[String(h.source)] || String(h.source)}
                       </span>
                       {h.amount && canManage ? (
                         <button
@@ -301,7 +333,11 @@ export function FundDetailModal({ code, name, holding, advice, position, canDeta
                     </div>
 
                     <div className="fund-record-meta">
-                      {h.settled ? (
+                      {h.settledSource === 'deduped' ? (
+                        <span className="fund-record-dup">
+                          同一天已有更高优先级的建议入账，本条仅保留参考
+                        </span>
+                      ) : h.settled ? (
                         h.settledShares ? (
                           <>
                             <span>已结算 · 净值 {(h.settledNav ?? 0).toFixed(4)}</span>
@@ -342,8 +378,12 @@ export function FundDetailModal({ code, name, holding, advice, position, canDeta
 
       {advice?.updatedAt && (
         <div className="faint" style={{ fontSize: 11, marginTop: 12 }}>
-          {advice.tradeDate} · {formatRelative(advice.updatedAt)}更新
+          {advice.tradeDate} · {SOURCE_LABEL[String(advice.source)] || advice.source} ·{' '}
+          {formatRelative(advice.updatedAt)}更新
           {advice.model ? ` · ${advice.model}` : ''}
+          {advice.settledSource && advice.settledSource !== 'deduped'
+            ? ` · 由 ${SOURCE_LABEL[advice.settledSource] || advice.settledSource} 结算`
+            : ''}
         </div>
       )}
 

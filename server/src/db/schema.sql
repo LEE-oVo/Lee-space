@@ -198,11 +198,18 @@ CREATE TABLE IF NOT EXISTS fund_advice (
   sources      TEXT,
   stale        INTEGER NOT NULL DEFAULT 0,
   model        TEXT,
+  -- 建议来源：workbuddy（本机任务）/ trae（Trae Work 云端任务）。
+  -- 建议层允许多来源并存对比；账本层（份额/成本/盈亏）始终只有一份
+  source       TEXT    NOT NULL DEFAULT 'workbuddy',
+  -- 结算由哪一端完成，仅作追溯；账本只结算一次
+  settled_source TEXT,
   created_at   INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
   updated_at   INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_fund_advice_unique ON fund_advice(code, trade_date);
+-- 唯一键含 source：同一天同一只基金允许存在两个工具的各一份建议，各自覆盖更新
 CREATE INDEX IF NOT EXISTS idx_fund_advice_date ON fund_advice(trade_date);
+-- 另外两个索引引用 source 列，对老库来说该列还没 ALTER 出来，
+-- 放在 schema.sql 里会直接报错——统一由 db/index.js 的补列逻辑在 ALTER 之后创建
 
 -- 买入批次：卖出时按先进先出逐笔结清，才能算准持有天数与赎回费
 CREATE TABLE IF NOT EXISTS fund_lots (
@@ -231,11 +238,14 @@ CREATE TABLE IF NOT EXISTS fund_nav (
 CREATE INDEX IF NOT EXISTS idx_fund_nav_date ON fund_nav(nav_date);
 
 -- 每日整体结论（市场简述 + 生成来源）
+-- 主键含 source：两只工具各自的市场判断都留着，页面按来源切换着看
 CREATE TABLE IF NOT EXISTS fund_daily (
-  trade_date TEXT PRIMARY KEY,
+  trade_date TEXT NOT NULL,
+  source     TEXT NOT NULL DEFAULT 'workbuddy',
   summary    TEXT,
   market     TEXT,
   model      TEXT,
   created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
-  updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+  updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+  PRIMARY KEY (trade_date, source)
 );

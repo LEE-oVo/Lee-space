@@ -54,8 +54,11 @@ export const api = {
 
   // 基金行情：只做展示，判断由定时任务里的大模型产出后写入
   funds: () => request<FundOverview>('/funds'),
-  fundHistory: (code: string, limit = 10) =>
-    request<{ history: FundAdvice[] }>(`/funds/history?code=${encodeURIComponent(code)}&limit=${limit}`),
+  fundHistory: (code: string, limit = 10, source?: string) =>
+    request<{ history: FundAdvice[] }>(
+      `/funds/history?code=${encodeURIComponent(code)}&limit=${limit}`
+        + (source ? `&source=${encodeURIComponent(source)}` : '')
+    ),
   fundSeries: (code: string, limit = 60) =>
     request<{ code: string; series: FundNavPoint[] }>(
       `/funds/series?code=${encodeURIComponent(code)}&limit=${limit}`
@@ -65,10 +68,10 @@ export const api = {
       '/funds/records',
       { method: 'POST', body: JSON.stringify(payload) }
     ),
-  setAdviceExecuted: (code: string, tradeDate: string, executed: boolean) =>
+  setAdviceExecuted: (code: string, tradeDate: string, executed: boolean, source?: string) =>
     request<{ ok: boolean; summary: { added: number; reduced: number; count: number } }>('/funds/executed', {
       method: 'PATCH',
-      body: JSON.stringify({ code, tradeDate, executed }),
+      body: JSON.stringify({ code, tradeDate, executed, source }),
     }),
   createFundHolding: (payload: Record<string, unknown>) =>
     request<{ ok: boolean; holding: FundHolding }>('/funds/holdings', { method: 'POST', body: JSON.stringify(payload) }),

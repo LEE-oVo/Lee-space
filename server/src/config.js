@@ -51,14 +51,29 @@ export const config = {
   weatherLat: Number(process.env.WEATHER_LAT || 22.54554),
   weatherLon: Number(process.env.WEATHER_LON || 114.0683),
   // 个人文件库：文件一律存在这里，绝不放进 Nginx 静态目录，下载必须过鉴权
-  // 基金：每日加仓总预算（所有基金合计，不是每只）
-  // 个人文件库：文件一律存在这里，绝不放进 Nginx 静态目录，下载必须过鉴权
   fileDir: process.env.FILE_DIR || '/opt/workbench/data/files',
+  // 基金：每日加仓总预算（所有基金合计，不是每只）
   fundDailyAddBudget: Number(process.env.FUND_DAILY_ADD_BUDGET || 500),
   fileMaxMb: Number(process.env.FILE_MAX_MB || 20),
   fileQuotaMb: Number(process.env.FILE_QUOTA_MB || 2048),
   // 未配置时 ingest 接口直接关闭（返回 503），避免开着无鉴权的写接口。
   fundIngestToken: process.env.FUND_INGEST_TOKEN || '',
+  // Trae Work 专用令牌：与主令牌分开，服务端据此自动判定建议来源，也便于单独吊销
+  fundIngestTokenTrae: process.env.FUND_INGEST_TOKEN_TRAE || '',
+  // 允许写账本（/settle）的来源，逗号分隔；留空 = 不限制。
+  // 角色分离时设成 trae，WorkBuddy 本机任务就只出建议、动不了账本
+  fundSettleSources: String(process.env.FUND_SETTLE_SOURCES || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+  // 同一基金同一天多个来源都给了建议时的入账优先级（账本只有一本，只认排在最前的那个）。
+  // manual 是用户自己补记的真实操作，永远最可信
+  fundSettlePriority: String(process.env.FUND_SETTLE_PRIORITY || 'manual,trae,workbuddy')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+  // 低于这个金额不值得下单：额度剩余不足时直接判持有，而不是拆出一笔零头
+  fundMinAddAmount: Number(process.env.FUND_MIN_ADD || 10),
   isProd: process.env.NODE_ENV !== 'development',
 };
 
