@@ -190,6 +190,48 @@ export interface FundPosition {
   lots: number;
 }
 
+/** 投资目标与额度约束（页面可改，改完立刻生效） */
+export interface FundConfig {
+  /** 总投资额（元），含已投入；0 = 不限 */
+  totalBudget: number;
+  /** 目标收益率（%） */
+  targetReturnPct: number;
+  /** 每日加仓上限（元），0 = 不限 */
+  dailyAddBudget: number;
+  /** 低于这个金额不下单 */
+  minAddAmount: number;
+}
+
+/** 投资总览：额度按「净投入」口径算，不随行情涨跌漂移 */
+export interface FundInvestment {
+  totalBudget: number;
+  targetReturnPct: number;
+  dailyAddBudget: number;
+  /** 累计买入金额 */
+  cashIn: number;
+  /** 累计赎回金额 */
+  cashOut: number;
+  /** 净投入 = 买入 − 赎回 */
+  netInvested: number;
+  /** 已执行但还没入账的加仓（也算占用） */
+  pendingAdds: number;
+  /** 已占用额度 = 净投入 + 待入账 */
+  used: number;
+  /** 还能投多少；不限时为 null */
+  remaining: number | null;
+  market: number;
+  costAmount: number;
+  unrealized: number;
+  realized: number;
+  totalProfit: number;
+  /** 相对净投入的收益率（%） */
+  returnPct: number | null;
+  /** 达到目标收益率时对应的金额 */
+  targetAmount: number | null;
+  /** 额度使用进度（%） */
+  progressPct: number | null;
+}
+
 export interface FundOverview {
   daily: FundDaily | null;
   /** 每个来源各自最新一天的整体结论，页面切来源时跟着换 */
@@ -199,6 +241,10 @@ export interface FundOverview {
   advice: FundAdvice[];
   /** 结算后的持仓（含金额，仅 fund:detail 可见） */
   positions: Record<string, FundPosition>;
+  /** 投资总览（含金额，仅 fund:detail 可见） */
+  investment: FundInvestment | null;
+  /** 投资配置（含金额语义，仅 fund:detail 可见） */
+  config: FundConfig | null;
   sources: FundSourceInfo[];
   sourceLabels: Record<string, string>;
   /** 允许写账本的来源；非空时其他来源只能出建议 */

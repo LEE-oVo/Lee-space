@@ -338,6 +338,108 @@ function syncCost(code) {
   return aggregate(code).cost;
 }
 
+/**
+ * 投资总览：额度模型的依据是「净投入」而不是当前市值。
+ *
+ * 净投入 = 累计买入金额 − 累计赎回金额 + 已承诺但还没入账的加仓。
+ * 用现金流而不是市值，是因为市值会随行情波动——涨了就把额度算多、
+ * 跌了又把额度算没，都会让模型的加仓节奏跟着行情抖。
+ * 用户设的总额是「我最多拿多少钱出来投」，那就是现金流口径。
+ */
+export function investmentSummary(cfg, today = null) {
+  const db = getDb();
+  const totalBudget = Number(cfg?.totalBudget) || 0;
+  const targetReturnPct = Number(cfg?.targetReturnPct) || 0;
+
+  const cashIn = db.prepare(`SELECT COALESCE(SUM(amount), 0) AS v FROM fund_lots`).get().v || 0;
+  const cashOut =
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(settled_amount), 0) AS v FROM fund_advice
+          WHERE settled = 1 AND action IN ('reduce','sell') AND settled_amount IS NOT NULL`
+      )
+      .get().v || 0;
+  const pendingAdds =
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(mx), 0) AS v FROM (
+           SELECT MAX(amount) AS mx FROM fund_advice
+            WHERE executed = 1 AND settled = 0 AND action IN ('buy','add') AND amount IS NOT NULL
+            GROUP BY code
+         )`
+      )
+      .get().v || 0;
+
+  // 当天已排但还没执行的加仓：按每只基金取各来源最大值（同一天同一只只会成交一笔）。
+  // 不计入 used（那不是真金白银），但要让额度校验看得见，否则两个工具
+  // 同一天各排一笔就把总额排穿了
+  let todayPlanned = 0;
+  if (today) {
+    todayPlanned =
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(mx), 0) AS v FROM (
+             SELECT MAX(amount) AS mx FROM fund_advice
+              WHERE trade_date = ? AND settled = 0 AND executed = 0
+                AND action IN ('buy','add') AND amount IS NOT NULL
+              GROUP BY code
+           )`
+        )
+        .get(today).v || 0;
+  }
+
+  const netInvested = round2(cashIn - cashOut);
+  const used = round2(netInvested + pendingAdds);
+  const remaining = totalBudget > 0 ? Math.max(0, round2(totalBudget - used)) : Number.POSITIVE_INFINITY;
+
+  // 市值与盈亏：逐只持仓汇总
+  let market = 0;
+  let costAmount = 0;
+  let realized = 0;
+  for (const h of db.prepare(`SELECT * FROM fund_holdings WHERE status = 'active'`).all()) {
+    ensureInitialLot(h);
+    const agg = aggregate(h.code);
+    const navRow = db
+      .prepare(`SELECT nav FROM fund_nav WHERE code = ? ORDER BY nav_date DESC LIMIT 1`)
+      .get(h.code);
+    if (navRow?.nav) market += agg.shares * navRow.nav;
+    costAmount += agg.costAmount;
+    realized += Number(h.realized) || 0;
+  }
+  market = round2(market);
+  costAmount = round2(costAmount);
+  const unrealized = round2(market - costAmount);
+  const totalProfit = round2(unrealized + realized);
+  const base = netInvested > 0 ? netInvested : 0;
+  const returnPct = base > 0 ? round2((totalProfit / base) * 10000) / 100 : null;
+  const targetAmount = base > 0 ? round2(base * (1 + targetReturnPct / 100)) : null;
+
+  return {
+    totalBudget,
+    targetReturnPct,
+    dailyAddBudget: Number(cfg?.dailyAddBudget) || 0,
+    cashIn: round2(cashIn),
+    cashOut: round2(cashOut),
+    netInvested,
+    pendingAdds: round2(pendingAdds),
+    todayPlanned: round2(todayPlanned),
+    used,
+    remaining: Number.isFinite(remaining) ? remaining : null,
+    // 校验口径：已确认占用 + 当天已排计划，两个工具同一天各排一笔也不会排穿
+    available: Number.isFinite(remaining)
+      ? Math.max(0, round2(remaining - todayPlanned))
+      : null,
+    market,
+    costAmount,
+    unrealized,
+    realized: round2(realized),
+    totalProfit,
+    returnPct,
+    targetAmount,
+    progressPct: totalBudget > 0 ? round2((used / totalBudget) * 10000) / 100 : null,
+  };
+}
+
 /** 持仓视图：批次汇总 + 市值/盈亏，供页面与定时任务使用 */
 export function holdingView(code) {
   const holding = getHolding(code);

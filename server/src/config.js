@@ -52,8 +52,16 @@ export const config = {
   weatherLon: Number(process.env.WEATHER_LON || 114.0683),
   // 个人文件库：文件一律存在这里，绝不放进 Nginx 静态目录，下载必须过鉴权
   fileDir: process.env.FILE_DIR || '/opt/workbench/data/files',
-  // 基金：每日加仓总预算（所有基金合计，不是每只）
-  fundDailyAddBudget: Number(process.env.FUND_DAILY_ADD_BUDGET || 500),
+  // 基金投资约束。默认值只作为兜底，实际值以页面里配的为准（存在 settings 表）。
+  // 总投资额：所有基金合计最多投入多少（含已经投进去的），这是唯一硬约束
+  fundTotalBudget: Number(process.env.FUND_TOTAL_BUDGET || 15000),
+  // 目标收益率（%）：模型据此决定加仓节奏与止盈位置
+  fundTargetReturnPct: Number(process.env.FUND_TARGET_RETURN || 15),
+  // 每日加仓上限，0 = 不限。默认不限——钱要花在刀刃上而不是被日限额摊平，
+  // 真正的约束是上面的总投资额
+  fundDailyAddBudget: Number(process.env.FUND_DAILY_ADD_BUDGET || 0),
+  // 低于这个金额不值得下单：剩余额度不足时直接判持有，而不是拆出一笔零头
+  fundMinAddAmount: Number(process.env.FUND_MIN_ADD || 10),
   fileMaxMb: Number(process.env.FILE_MAX_MB || 20),
   fileQuotaMb: Number(process.env.FILE_QUOTA_MB || 2048),
   // 未配置时 ingest 接口直接关闭（返回 503），避免开着无鉴权的写接口。

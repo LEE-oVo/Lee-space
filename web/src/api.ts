@@ -1,6 +1,6 @@
 import type {
-  AuditLog, DshStatus, FileItem, FileQuota, FundAdvice, FundHolding, FundNavPoint,
-  FundOverview, PermissionRecord, RoleRecord, SystemStats, User, WeatherData, WorkbenchUser,
+  AuditLog, DshStatus, FileItem, FileQuota, FundAdvice, FundConfig, FundHolding, FundInvestment,
+  FundNavPoint, FundOverview, PermissionRecord, RoleRecord, SystemStats, User, WeatherData, WorkbenchUser,
 } from './types';
 
 // 注意：/api 前缀已整段让给 DeepSeek Harness，工作台自身接口统一走 /wb-api
@@ -72,6 +72,12 @@ export const api = {
     request<{ ok: boolean; summary: { added: number; reduced: number; count: number } }>('/funds/executed', {
       method: 'PATCH',
       body: JSON.stringify({ code, tradeDate, executed, source }),
+    }),
+  fundConfig: () => request<{ config: FundConfig; investment: FundInvestment }>('/funds/config'),
+  updateFundConfig: (patch: Partial<FundConfig>) =>
+    request<{ ok: boolean; config: FundConfig; investment: FundInvestment }>('/funds/config', {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
     }),
   createFundHolding: (payload: Record<string, unknown>) =>
     request<{ ok: boolean; holding: FundHolding }>('/funds/holdings', { method: 'POST', body: JSON.stringify(payload) }),

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { requirePermission, denyGuest, requireFundIngest, requireFundSettle, clientIp, hasPermission } from '../middleware/auth.js';
 import { writeAudit } from '../db/repo.js';
 import { config } from '../config.js';
-import { holdingView, pendingSettlements, settleDay, updateFees } from '../services/position.js';
+import { holdingView, pendingSettlements, settleDay, updateFees, investmentSummary } from '../services/position.js';
+import { getFundConfig, updateFundConfig } from '../services/fundConfig.js';
 import {
   FUND_ACTIONS,
   FUND_CONFIDENCE,
@@ -29,15 +30,33 @@ import {
 
 const router = Router();
 const CODE_RE = /^[A-Za-z0-9]{4,12}$/;
-// 金额规则随接口一起下发给定时任务，避免规则散落在 prompt 里漂移
-const AMOUNT_RULES = {
-  unit: 100,
-  scope: 'daily-total',
-  dailyTotal: config.fundDailyAddBudget,
-  note: `买入/加仓金额必须是整百；所有基金当日加仓合计不超过 ${config.fundDailyAddBudget} 元`
-    + '（是每日总预算，不是每只各这么多）。两个工具共用同一个额度池，先到先得，'
-    + '额度不够时服务端会自动削减或改为持有，并在 reason 里注明',
-};
+/**
+ * 下发给定时任务的金额规则。每次读库，页面改完立刻生效——
+ * 写死在模块加载时的话，改了配置要重启服务才有用。
+ */
+function amountRules(cfg = getFundConfig(), invest = null) {
+  const total = Number(cfg.totalBudget) || 0;
+  const daily = Number(cfg.dailyAddBudget) || 0;
+  const parts = ['买入/加仓金额必须是整百的整数（100、200、300…）；'];
+  if (total > 0) {
+    parts.push(`所有基金**累计投入合计不得超过 ${total} 元**（含已经投进去的，`
+      + '这是唯一硬约束，不是每日限额）；');
+  }
+  parts.push(daily > 0
+    ? `每日加仓上限 ${daily} 元，两个工具共用；`
+    : '不设每日加仓上限——钱要留到确定性高的机会上，不要被日限额摊平成定投；');
+  parts.push('超过剩余额度时服务端会自动削减或改成持有，请自己先看余额再报。');
+  return {
+    unit: 100,
+    scope: total > 0 ? 'total-investment' : 'none',
+    totalBudget: total,
+    dailyAddBudget: daily,
+    minAddAmount: cfg.minAddAmount,
+    targetReturnPct: cfg.targetReturnPct,
+    remaining: invest ? invest.remaining : null,
+    note: parts.join(''),
+  };
+}
 
 /** 服务器按北京时间取当天日期，避免 UTC 跨日错位 */
 function todayStr() {
@@ -54,6 +73,7 @@ router.get('/', requirePermission('fund:view'), (req, res) => {
   const holdings = listHoldings();
   // 不传 source：返回「每只基金 × 每个来源」各自的最新一条，页面自己做切换与冲突对比
   const advice = latestAdvice();
+  const cfg = getFundConfig();
   res.json({
     daily: latestDaily(),
     // 每个来源各自的整体结论，页面切到哪个来源就显示哪份
@@ -64,12 +84,45 @@ router.get('/', requirePermission('fund:view'), (req, res) => {
     positions: detail
       ? Object.fromEntries(holdings.map((h) => [h.code, holdingView(h.code)]))
       : {},
+    // 总额度与目标收益：含金额，仅 detail
+    investment: detail ? investmentSummary(cfg, todayStr()) : null,
+    config: detail ? cfg : null,
     // 库里实际有哪些来源：只有一个来源时页面不显示切换器
     sources: adviceSources(),
     sourceLabels: SOURCE_LABELS,
     settleSources: config.fundSettleSources,
     scope: detail ? 'full' : 'public',
   });
+});
+
+// 投资配置：总投资额 / 目标收益率 / 每日加仓上限。读写都要 fund:manage
+router.get('/config', requirePermission('fund:manage'), denyGuest, (_req, res) => {
+  const cfg = getFundConfig();
+  res.json({ config: cfg, investment: investmentSummary(cfg, todayStr()) });
+});
+
+router.patch('/config', requirePermission('fund:manage'), denyGuest, (req, res) => {
+  const result = updateFundConfig(
+    {
+      totalBudget: req.body?.totalBudget,
+      targetReturnPct: req.body?.targetReturnPct,
+      dailyAddBudget: req.body?.dailyAddBudget,
+      minAddAmount: req.body?.minAddAmount,
+    },
+    req.user?.id ?? null
+  );
+  if (!result.ok) {
+    return res.status(400).json({ ok: false, error: '参数不合法', details: result.errors });
+  }
+  writeAudit({
+    userId: req.user?.id ?? null,
+    username: req.user?.username ?? null,
+    action: 'fund.config.update',
+    target: 'fund',
+    detail: `总额 ${result.config.totalBudget} / 目标 ${result.config.targetReturnPct}% / 日限 ${result.config.dailyAddBudget || '不限'}`,
+    ip: clientIp(req),
+  });
+  return res.json({ ok: true, config: result.config, investment: investmentSummary(result.config, todayStr()) });
 });
 
 // 净值走势：只有净值数字，不涉及持仓金额，有 fund:view 即可
@@ -95,16 +148,20 @@ router.get('/history', requirePermission('fund:view'), (req, res) => {
 // 附带每只基金最近的加减仓记录，让模型能看到自己过去的判断与实际执行情况。
 router.get('/holdings', requireFundIngest, (req, res) => {
   const date = String(req.query.date || todayStr());
+  const cfg = getFundConfig();
+  const invest = investmentSummary(cfg, date);
   res.json({
     // 告诉任务服务端把它判成了哪个来源：任务侧不用再自己声明，也不该自己声明
     source: req.fundSource,
     holdings: holdingsForAutomation(Number(req.query.limit) || 12),
     // 结算后的真实持仓，让模型知道当前份额与成本
     positions: Object.fromEntries(listHoldings().map((h) => [h.code, holdingView(h.code)])),
-    amountRules: AMOUNT_RULES,
-    // 当天共享额度池的占用情况，模型据此在预算内分配
-    todayAllocation: todayAllocation(date),
-    // 本来源能不能写账本（角色分离时 WorkBuddy 只能出建议）
+    amountRules: amountRules(cfg, invest),
+    // 总投资额与剩余：模型分配加仓金额的主要依据（不是每日限额）
+    investment: invest,
+    // 当天共享额度池的占用情况（没设日限时 remain 为 null）
+    todayAllocation: todayAllocation(date, cfg),
+    // 本来源能不能写账本（Trae 兜底时两边都可写）
     canSettle: config.fundSettleSources.length === 0 || config.fundSettleSources.includes(req.fundSource),
   });
 });
@@ -200,10 +257,12 @@ router.post('/records', requirePermission('fund:manage'), denyGuest, (req, res) 
     detail: `${req.body?.action} ${req.body?.amount ?? ''} ${req.body?.note || ''}`.trim(),
     ip: clientIp(req),
   });
+  const cfg = getFundConfig();
   return res.json({
     ok: true,
     id: result.id,
-    allocation: todayAllocation(String(req.body?.tradeDate)),
+    allocation: todayAllocation(String(req.body?.tradeDate), cfg),
+    investment: investmentSummary(cfg, String(req.body?.tradeDate) || todayStr()),
   });
 });
 
@@ -288,11 +347,11 @@ router.post('/ingest', requireFundIngest, (req, res) => {
     accepted: result.accepted,
     tradeDate: result.tradeDate,
     source: result.source,
-    // 被额度拦截而削减/改持有的条目，任务日志里要能看到
+    // 被额度拦截而削减/改持有的条目：非空的 adjusted 说明模型报超了
     budget: result.budget,
     actions: FUND_ACTIONS,
     confidence: FUND_CONFIDENCE,
-    amountRules: AMOUNT_RULES,
+    amountRules: amountRules(),
   });
 });
 

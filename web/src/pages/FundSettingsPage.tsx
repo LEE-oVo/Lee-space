@@ -4,18 +4,21 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { Icon } from '../components/Icon';
 import { FundHoldings } from '../components/FundHoldings';
-import type { FundHolding } from '../types';
+import { FundInvestmentConfig } from '../components/FundInvestmentConfig';
+import type { FundConfig, FundHolding, FundInvestment } from '../types';
 
 export function FundSettingsPage() {
   const { can } = useAuth();
   const canManage = can('fund:manage');
   const [holdings, setHoldings] = useState<FundHolding[] | null>(null);
+  const [invest, setInvest] = useState<{ config: FundConfig; investment: FundInvestment } | null>(null);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     try {
       const d = await api.funds();
       setHoldings(d.holdings);
+      if (d.config && d.investment) setInvest({ config: d.config, investment: d.investment });
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
@@ -47,6 +50,8 @@ export function FundSettingsPage() {
   return (
     <div className="page">
       {error && <div className="alert error">{error}</div>}
+
+      <FundInvestmentConfig initial={invest} onChanged={load} />
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 500, marginBottom: 6 }}>关于这个页面</div>

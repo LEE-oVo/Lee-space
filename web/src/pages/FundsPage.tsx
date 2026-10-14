@@ -379,6 +379,51 @@ export function FundsPage() {
           </div>
         </div>
 
+        {/* 额度与收益一眼看完：模型就是照这几个数决定加仓节奏的 */}
+        {canDetail && data.investment && data.investment.totalBudget > 0 && (
+          <div className="fund-budget-line">
+            <span>
+              已投入 <b className="mono">¥{Math.round(data.investment.used).toLocaleString('zh-CN')}</b>
+              {' / '}
+              {Math.round(data.investment.totalBudget).toLocaleString('zh-CN')}
+            </span>
+            <span>
+              剩余可投{' '}
+              <b className="mono up">
+                ¥{Math.round(data.investment.remaining ?? 0).toLocaleString('zh-CN')}
+              </b>
+            </span>
+            <span>
+              目标{' '}
+              <b className="mono">
+                {data.investment.targetReturnPct >= 0 ? '+' : ''}
+                {data.investment.targetReturnPct}%
+              </b>
+              {data.investment.targetAmount != null && (
+                <span className="faint">
+                  {' '}
+                  （¥{Math.round(data.investment.targetAmount).toLocaleString('zh-CN')}）
+                </span>
+              )}
+            </span>
+            {data.investment.returnPct !== null && (
+              <span>
+                当前{' '}
+                <b className={`mono ${data.investment.returnPct >= 0 ? 'up' : 'down'}`}>
+                  {data.investment.returnPct >= 0 ? '+' : ''}
+                  {data.investment.returnPct.toFixed(2)}%
+                </b>
+              </span>
+            )}
+            {canManage && (
+              <Link className="fund-budget-link" to="/funds/settings">
+                调整
+                <Icon name="chevRight" size={12} />
+              </Link>
+            )}
+          </div>
+        )}
+
         {sourceTabs.length > 0 && (
           <div className="fund-source-tabs" role="tablist" aria-label="建议来源">
             {sourceTabs.map((t) => (

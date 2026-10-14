@@ -1,6 +1,7 @@
 import { getDb } from '../db/index.js';
 import { config } from '../config.js';
-import { parseFeeRules } from './position.js';
+import { parseFeeRules, investmentSummary } from './position.js';
+import { getFundConfig } from './fundConfig.js';
 import { FUND_SOURCES, SOURCE_LABELS, normalizeSource, sourceRank } from './fundSource.js';
 
 // 本模块只负责存取与校验：行情抓取和买卖判断由定时任务里的大模型完成，
@@ -250,9 +251,10 @@ export function publicAdvice(a) {
  * 所以占用按「每只基金当天取最大金额」累加，而不是把所有来源的金额直接相加——
  * 否则两只工具各建议 500，占用会算成 1000，第二只工具就被凭空卡死。
  */
-export function todayAllocation(tradeDate) {
+export function todayAllocation(tradeDate, cfg) {
   const db = getDb();
   const used = effectiveUsed(db, tradeDate);
+  const budget = Number((cfg ?? getFundConfig())?.dailyAddBudget) || 0;
   const bySource = {};
   for (const r of db
     .prepare(
@@ -267,18 +269,14 @@ export function todayAllocation(tradeDate) {
   return {
     date: tradeDate,
     used,
-    budget: config.fundDailyAddBudget,
-    remain: budgetRemain(used),
+    budget,
+    // 0 = 不限；这时 remain 给 null，避免前端拿 Infinity 去算
+    remain: budget > 0 ? Math.max(0, budget - used) : null,
+    unlimited: budget <= 0,
     // 各来源自己报的金额合计，仅用于展示「谁说了什么」，不代表真实占用
     bySource,
     scope: 'daily-total',
   };
-}
-
-function budgetRemain(used) {
-  const budget = config.fundDailyAddBudget;
-  if (!Number.isFinite(budget) || budget <= 0) return Number.POSITIVE_INFINITY;
-  return Math.max(0, budget - used);
 }
 
 /** 按「每只基金当天取最大金额」累加的已占用额度，excludeCodes 里的基金不计入 */
@@ -555,80 +553,96 @@ function buildDailySummary(tradeDate, rows) {
 }
 
 /**
- * 每日加仓额度是「共享池」：两只工具加起来当天也不能超过预算。
+ * 加仓额度硬校验。
+ *
+ * 主约束是**总投资额**（我最多拿多少钱出来投，含已经投进去的），不再按日限额。
+ * 理由：日限额会把钱平均摊到每一天，好机会来了也只能下 500，反而错过；
+ * 真正的风险是总盘子超支，把约束放在总额上才对。
+ * 每日上限仍保留为可选项（dailyAddBudget > 0 时生效），两个约束取更严的那个。
  *
  * 先到先得：按 items 顺序分配，额度不够就削减，连最小金额都不够就判持有。
  * 不整批拒绝——那样第二个工具当天就直接没有建议了，反而丢信息。
- * 所有削减都会写进 reason 并返回 adjusted，任务日志里能查到是谁被砍了。
+ * 所有削减都会写进 reason 并返回 adjusted，任务日志与页面上都能查到。
  */
-function applyDailyBudget(normalized, tradeDate, source) {
-  const budget = config.fundDailyAddBudget;
-  if (!Number.isFinite(budget) || budget <= 0) {
-    return { used: 0, budget, remain: Number.POSITIVE_INFINITY, adjusted: [] };
-  }
-  const minAdd = Math.max(0, Number(config.fundMinAddAmount) || 0);
+function applyBudget(normalized, tradeDate, source, cfg, invest) {
   const db = getDb();
-  const codesInBatch = new Set(normalized.map((r) => r.code));
+  const minAdd = Math.max(0, Number(cfg.minAddAmount) || 0);
+  const adjusted = [];
   const picking = `action IN ('buy','add') AND amount IS NOT NULL`;
 
-  // 批次外的基金：按「每只基金取各来源最大值」累加
-  let used = 0;
+  // 两个工具可能对同一只基金同一天各排一笔，但真正会成交的只有一笔。
+  // 所以「已排计划」按每只基金取各来源最大值。注意只包含**未执行**的：
+  // 已执行的在 invest.used 里算过了，重复计会白白吃掉额度。
+  const planByCode = new Map();
   for (const r of db
     .prepare(
       `SELECT code, MAX(amount) AS mx FROM fund_advice
-        WHERE trade_date = ? AND ${picking} GROUP BY code`
+        WHERE trade_date = ? AND settled = 0 AND executed = 0 AND ${picking} GROUP BY code`
     )
     .all(tradeDate)) {
-    if (codesInBatch.has(r.code)) continue;
-    used += Number(r.mx) || 0;
+    planByCode.set(r.code, Number(r.mx) || 0);
   }
 
-  // 批次内的基金：本来源这次会覆盖自己的旧值，但**别的来源**已经占住的部分仍是地板。
-  // 同一天同一只基金只会成交一笔，真实占用是各来源里的最大值——
-  // 少了这个地板，第二个工具把同一只基金重新规划一遍就能把额度算漏。
-  const floorByCode = new Map();
-  for (const r of db
-    .prepare(
-      `SELECT code, MAX(amount) AS mx FROM fund_advice
-        WHERE trade_date = ? AND ${picking} AND IFNULL(source,'workbuddy') <> ? GROUP BY code`
-    )
-    .all(tradeDate, source)) {
-    floorByCode.set(r.code, Number(r.mx) || 0);
+  // 约束一：总投资额。已确认占用 + 当天全部已排计划（含批次内的地板）
+  const totalBudget = Number(cfg.totalBudget) || 0;
+  let totalLeft = Number.POSITIVE_INFINITY;
+  if (totalBudget > 0) {
+    let occupied = Number(invest.used) || 0;
+    for (const mx of planByCode.values()) occupied += mx;
+    totalLeft = Math.max(0, totalBudget - occupied);
   }
-  for (const code of codesInBatch) used += floorByCode.get(code) || 0;
 
-  const adjusted = [];
+  // 约束二：当日上限（0 = 不限），同一套口径
+  let dayLeft = Number.POSITIVE_INFINITY;
+  const daily = Number(cfg.dailyAddBudget) || 0;
+  if (daily > 0) {
+    let used = 0;
+    for (const mx of planByCode.values()) used += mx;
+    dayLeft = Math.max(0, daily - used);
+  }
+
   for (const row of normalized) {
     if (row.action !== 'buy' && row.action !== 'add') continue;
     const want = Number(row.amount) || 0;
-    const floor = floorByCode.get(row.code) || 0;
-    // 边际占用：金额不超过地板时，这笔并没有多占额度
+    const floor = planByCode.get(row.code) || 0;
+    // 边际占用：金额不超过地板时并没有多占额度（本来源这次是覆盖自己那条）
     const marginal = Math.max(0, want - floor);
-    const avail = Math.max(0, budget - used);
-
-    if (marginal <= avail) {
-      used += marginal;
+    const totalOk = want <= totalLeft;
+    const dayOk = marginal <= dayLeft;
+    if (totalOk && dayOk) {
+      totalLeft -= marginal;
+      dayLeft -= marginal;
       continue;
     }
-    if (avail >= minAdd && minAdd > 0) {
-      const approved = Math.round(floor + avail);
-      const note = `【额度拦截】当日共享额度只剩 ${Math.round(avail)} 元，`
-        + `原建议 ${row.action} ${want} 元已按剩余额度下调为 ${approved} 元。`;
-      row.reason = `${note}${row.reason || ''}`.slice(0, 2000);
+
+    // 能批多少：两个约束各自能给的量取小，再加上地板
+    let approved = Number.isFinite(totalLeft) ? Math.min(want, floor + totalLeft) : want;
+    if (Number.isFinite(dayLeft)) approved = Math.min(approved, floor + dayLeft);
+    approved = Math.floor(Math.max(0, approved));
+
+    if (approved >= minAdd && minAdd > 0) {
+      const why = !totalOk
+        ? `总投资额度只剩 ${Math.round(Number.isFinite(totalLeft) ? totalLeft : 0)} 元`
+        : `当日额度只剩 ${Math.round(dayLeft)} 元`;
+      row.reason = `【额度拦截】${why}（${SOURCE_LABELS[source] || source} 来源），`
+        + `原建议 ${row.action} ${want} 元已下调为 ${approved} 元。${row.reason || ''}`.slice(0, 2000);
       row.amount = approved;
-      used += avail;
+      totalLeft -= Math.max(0, approved - floor);
+      dayLeft -= Math.max(0, approved - floor);
       adjusted.push({ code: row.code, action: row.action, requested: want, approved });
     } else {
-      const note = `【额度拦截】当日 ${budget} 元共享额度已用完（${SOURCE_LABELS[source] || source} 来源），`
-        + `原建议 ${row.action} ${want} 元改为持有。`;
-      row.reason = `${note}${row.reason || ''}`.slice(0, 2000);
+      const why = !totalOk
+        ? `总投资额度（${Math.round(totalBudget)} 元）已用尽`
+        : `当日 ${Math.round(daily)} 元额度已用完`;
+      row.reason = `【额度拦截】${why}（${SOURCE_LABELS[source] || source} 来源），`
+        + `原建议 ${row.action} ${want} 元改为持有。${row.reason || ''}`.slice(0, 2000);
       row.action = 'hold';
       row.amount = null;
       adjusted.push({ code: row.code, action: 'hold', requested: want, approved: 0 });
     }
   }
 
-  return { used: Math.round(used * 100) / 100, budget, remain: Math.max(0, budget - used), adjusted };
+  return { adjusted };
 }
 
 /**
@@ -721,8 +735,12 @@ export function ingestAdvice(payload, options = {}) {
   if (errors.length > 0) return { ok: false, errors };
 
   const db = getDb();
-  // 额度是共享池，必须在入库前算：同一天另一只工具已经占掉的部分要先扣
-  const budget = applyDailyBudget(normalized, tradeDate, source);
+  // 额度必须在入库前算：库里已有的投入 + 本批次新承诺的，加起来不能超总投资额
+  const cfg = getFundConfig();
+  // 传 tradeDate：当天已排但未执行的加仓也要算进占用，
+  // 否则两个工具同一天各排一笔就能把总额排穿
+  const invest = investmentSummary(cfg, tradeDate);
+  const { adjusted } = applyBudget(normalized, tradeDate, source, cfg, invest);
 
   const upsert = db.prepare(
     `INSERT INTO fund_advice
@@ -778,11 +796,12 @@ export function ingestAdvice(payload, options = {}) {
     accepted: normalized.length,
     tradeDate,
     source,
+    // 被额度拦截而削减/改持有的条目：非空的 adjusted 说明模型报超了，任务汇报要点出来
     budget: {
-      budget: budget.budget,
-      used: todayAllocation(tradeDate).used,
-      remain: todayAllocation(tradeDate).remain,
-      adjusted: budget.adjusted,
+      adjusted,
+      totalBudget: invest.totalBudget,
+      used: invest.used,
+      remaining: invest.remaining,
     },
   };
 }
