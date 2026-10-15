@@ -27,7 +27,57 @@ export function migrate(database) {
   ensureFundAdviceColumns(database);
   ensureFundHoldingColumns(database);
   ensureFundDailySource(database);
+  ensureSingleExecuted(database);
   seedBaseline(database);
+}
+
+/**
+ * 「执行」是单条互斥的：同一只基金同一天最多只能有一条 executed=1。
+ * 那条就是我当天真实做的操作，加减仓记录和账本都只认它——
+ * 多个工具/模型各给各的建议没问题，但采纳只能选其中一个，选了别的就自动落选。
+ * 这样以后再加工具也不会出现「同一天记了两笔」的事故。
+ *
+ * 唯一性用部分索引在数据库层强制，应用层再怎么改都绕不过去。
+ */
+function ensureSingleExecuted(database) {
+  // 老数据里同一天可能有多条 executed=1（旧语义是整天一起改），先按入账优先级
+  // 挑真正结算过的那条保留，其余落选。建索引前必须清干净，否则索引会建失败
+  const dup = database
+    .prepare(
+      `SELECT code, trade_date, COUNT(*) n FROM fund_advice
+        WHERE executed = 1 GROUP BY code, trade_date HAVING n > 1`
+    )
+    .all();
+  if (dup.length > 0) {
+    const pick = database.prepare(
+      `SELECT id, IFNULL(source,'workbuddy') AS source FROM fund_advice
+        WHERE code = ? AND trade_date = ? AND executed = 1 ORDER BY id`
+    );
+    const demote = database.prepare(`UPDATE fund_advice SET executed = 0, updated_at = ? WHERE id = ?`);
+    const t = Math.floor(Date.now() / 1000);
+    const order = config.fundSettlePriority;
+    const rank = (s) => {
+      const i = order.indexOf(s);
+      return i >= 0 ? i : order.length + 1;
+    };
+    database.transaction(() => {
+      for (const d of dup) {
+        const rows = pick.all(d.code, d.trade_date);
+        // 保留入账优先级最高的那条（通常与账本里真正结算的一致），其余置未执行
+        const winner = rows.reduce((m, r) => (rank(r.source) < rank(m.source) ? r : m));
+        for (const r of rows) if (r.id !== winner.id) demote.run(t, r.id);
+      }
+    })();
+  }
+
+  const idx = database
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_fund_advice_executed'`)
+    .get();
+  if (!idx) {
+    database.exec(
+      `CREATE UNIQUE INDEX idx_fund_advice_executed ON fund_advice(code, trade_date) WHERE executed = 1`
+    );
+  }
 }
 
 function addColumn(database, table, column, ddl) {

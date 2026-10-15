@@ -186,7 +186,9 @@ export function FundsPage() {
   // 按来源过滤后按基金分组，「合并」视图下每只基金可能有多条（各来源一条）
   const grouped = new Map<string, FundAdvice[]>();
   for (const a of data.advice || []) {
-    if (source !== 'all' && a.source !== source) continue;
+    // 已采纳的那条即使不属于当前来源也要留下——它是我当天的实际操作，
+    // 在任何视图下都该看得见，否则切到 WorkBuddy 就看不到自己采纳了什么
+    if (source !== 'all' && a.source !== source && !a.executed) continue;
     const list = grouped.get(a.code) || [];
     list.push(a);
     grouped.set(a.code, list);
@@ -214,7 +216,10 @@ export function FundsPage() {
 
   function renderCard(code: string, holding: FundHolding | null, index: number) {
     const all = allOf(code);
-    const advice = all[0];
+    // 当天已采纳的那条优先展示：它就是我实际做的操作，比任何候选建议都重要。
+    // 采纳是互斥的（一天最多一条），所以这里最多命中一条
+    const adopted = all.find((a) => a.executed) || null;
+    const advice = adopted || all[0];
     const name = holding?.name || advice?.summary || code;
     const pos = positions[code];
     const pts = series[code];
@@ -233,7 +238,9 @@ export function FundsPage() {
     const sameDayOthers = advice
       ? all.filter((a) => a.source !== advice.source && a.tradeDate === advice.tradeDate)
       : [];
+    // 已经做出选择之后就不再提示分歧——那只会让人怀疑自己选错了
     const conflict = Boolean(advice)
+      && !adopted
       && sameDayOthers.length > 0
       && new Set([advice, ...sameDayOthers].map((a) => directionOf(a.action))).size > 1;
     // 真正入账的那条按入账优先级算，未必是页面主展示的这条——
@@ -621,7 +628,6 @@ export function FundsPage() {
           position={detail.position}
           canDetail={canDetail}
           canManage={canManage}
-          source={detail.source}
           onClose={() => setDetail(null)}
         />
       )}

@@ -28,8 +28,8 @@ const ACTION_CLASS: Record<FundAction, string> = {
   sell: 'act-sell',
 };
 
-// 与服务端 FUND_SETTLE_PRIORITY 一致：数字越小越优先入账
-const SOURCE_PRIORITY: Record<string, number> = { manual: 0, trae: 1, workbuddy: 2 };
+// 入账优先级已经不再决定「采纳谁」——用户点哪条账本就认哪条，
+// 同一天只能有一条被执行（服务端唯一索引强制），这里不再需要它
 const SOURCE_LABEL: Record<string, string> = {
   workbuddy: 'WorkBuddy',
   trae: 'Trae Work',
@@ -44,21 +44,22 @@ interface Props {
   position: FundPosition | undefined;
   canDetail: boolean;
   canManage: boolean;
-  /** 页面当前选中的来源；'all' 时显示全部并标出每条来源 */
-  source: string;
   onClose: () => void;
 }
 
 export function FundDetailModal({
-  code, name, holding, advice, position, canDetail, canManage, source, onClose,
+  code, name, holding, advice, position, canDetail, canManage, onClose,
 }: Props) {
   const [series, setSeries] = useState<FundNavPoint[] | null>(null);
   const [history, setHistory] = useState<FundAdvice[] | null>(null);
-  // 弹窗里的补记只写 manual 格子，不动两只工具各自的判断
-  const histSource = source === 'manual' ? 'all' : source;
+  // 记录区必须能看到同一天所有工具的候选，才能选择采纳哪条——
+  // 所以不受页面当前来源筛选的影响，始终拉全部来源
+  const histSource = 'all';
   const [error, setError] = useState('');
   const [recording, setRecording] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  // 哪些日期展开了「未采纳的建议」
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     let alive = true;
@@ -66,9 +67,7 @@ export function FundDetailModal({
       try {
         const [s, h] = await Promise.all([
           api.fundSeries(code, 1000),
-          canDetail
-            ? api.fundHistory(code, 20, histSource === 'all' ? undefined : histSource)
-            : Promise.resolve({ history: [] as FundAdvice[] }),
+          canDetail ? api.fundHistory(code, 20) : Promise.resolve({ history: [] as FundAdvice[] }),
         ]);
         if (!alive) return;
         setSeries(s.series);
@@ -84,19 +83,12 @@ export function FundDetailModal({
   }, [code, canDetail, reloadKey, histSource]);
 
   // 只统计「已执行」的记录，那才是真实发生的仓位变化。
-  // 同一天两个来源各有一条时只算入账优先级最高的那条，否则会把一笔操作算成两笔
+  // 「执行」是互斥的：同一天最多一条，所以直接累加即可，不用再按天去重
   const totals = useMemo(() => {
     let added = 0;
     let reduced = 0;
     let count = 0;
-    const byDate = new Map<string, FundAdvice>();
     for (const h of history || []) {
-      const cur = byDate.get(h.tradeDate);
-      if (!cur || SOURCE_PRIORITY[String(h.source)] < SOURCE_PRIORITY[String(cur.source)]) {
-        byDate.set(h.tradeDate, h);
-      }
-    }
-    for (const h of byDate.values()) {
       if (!h.executed || !h.amount) continue;
       count += 1;
       if (h.action === 'buy' || h.action === 'add') added += h.amount;
@@ -105,14 +97,113 @@ export function FundDetailModal({
     return { added, reduced, count };
   }, [history]);
 
+  // 记录按天分组：同一天可能有多个工具各给一条建议，但只有被采纳的那条
+  // 是「我当天做的事」，其余收起为一行候选，避免把建议当成已发生的操作
+  const dayGroups = useMemo(() => {
+    const m = new Map<string, FundAdvice[]>();
+    for (const h of history || []) {
+      const list = m.get(h.tradeDate) || [];
+      list.push(h);
+      m.set(h.tradeDate, list);
+    }
+    return [...m.entries()].sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0));
+  }, [history]);
+
+  /**
+   * 单条记录。被采纳的那条就是「我当天做的事」，不标来源、
+   * 也不提是哪个工具建议的——记录只回答「做了什么」。
+   * locked 表示同一天已经有被采纳的了，这条只能看不能选。
+   */
+  function renderRecord(h: FundAdvice, opts: { delay: number; locked: boolean; choosable: boolean }) {
+    const isAdopted = h.executed;
+    return (
+      <div
+        className={`fund-record${opts.locked ? ' is-locked' : ''}${isAdopted ? ' is-adopted' : ''}`}
+        key={`${h.tradeDate}-${h.source}`}
+        style={{ animationDelay: `${opts.delay}ms` }}
+      >
+        <div className="fund-record-head">
+          <span className="mono fund-record-date">{h.tradeDate}</span>
+          <span className={`fund-chip ${ACTION_CLASS[h.action]}`}>
+            <span className="fund-chip-dot" />
+            <span className="fund-chip-label">{ACTION_LABEL[h.action]}</span>
+            {h.amount ? <b className="mono fund-chip-amt">¥{h.amount.toLocaleString('zh-CN')}</b> : null}
+          </span>
+          {/* 只有候选才标来源，被采纳的那条不需要——我不关心是谁建议的 */}
+          {!isAdopted && (
+            <span className="fund-src-badge" data-source={String(h.source)}>
+              {SOURCE_LABEL[String(h.source)] || String(h.source)}
+            </span>
+          )}
+          {/* 有金额的随时能采纳；「持有」这类只在当天有多个候选时才给按钮——
+              那时才存在「选哪个」的问题，否则满屏按钮反而吵 */}
+          {opts.choosable && canManage ? (
+            <button
+              className={`btn sm fund-record-act${isAdopted ? ' primary' : ''}`}
+              disabled={opts.locked}
+              onClick={() => void toggleExecuted(h)}
+              title={
+                opts.locked
+                  ? '同一天只能执行一个建议：先取消已执行的那条，再来选这条'
+                  : isAdopted
+                    ? '取消后同一天其他建议可重新选择'
+                    : '采纳这条作为当天的实际操作'
+              }
+            >
+              {isAdopted ? <Icon name="check" size={12} /> : <Icon name="plus" size={12} />}
+              {isAdopted ? '已执行' : '采纳'}
+            </button>
+          ) : h.amount ? (
+            <span className={`fund-record-state${isAdopted ? ' is-done' : ''}`}>
+              {isAdopted ? '已执行' : '未采纳'}
+            </span>
+          ) : null}
+        </div>
+
+        <div className="fund-record-meta">
+          {h.settledSource === 'deduped' ? (
+            <span className="fund-record-dup">同一天已采纳另一条建议，本条仅保留参考</span>
+          ) : h.settled ? (
+            h.settledShares ? (
+              <>
+                <span>已结算 · 净值 {(h.settledNav ?? 0).toFixed(4)}</span>
+                <span>{h.settledShares} 份</span>
+                {h.settledFee ? <span>费用 ¥{h.settledFee.toFixed(2)}</span> : null}
+                {h.settledRealized != null ? (
+                  <span>
+                    已实现{' '}
+                    <b className={h.settledRealized >= 0 ? 'up' : 'down'}>
+                      {h.settledRealized >= 0 ? '+' : ''}
+                      {h.settledRealized.toFixed(2)}
+                    </b>
+                  </span>
+                ) : null}
+              </>
+            ) : (
+              <span>无需结算</span>
+            )
+          ) : h.executed ? (
+            <span className="fund-pending">待结算（等收盘净值）</span>
+          ) : (
+            <span>未采纳，不进账本</span>
+          )}
+        </div>
+
+        {h.summary && <div className="fund-record-summary">{h.summary}</div>}
+      </div>
+    );
+  }
+
   async function toggleExecuted(h: FundAdvice) {
     try {
-      // 带上来源：服务端会按「同一天所有来源一起改」处理，executed 是账本语义
+      // 带上来源：服务端只改这一条，并把同一天其他建议自动落选（一天只执行一个）
       await api.setAdviceExecuted(h.code, h.tradeDate, !h.executed, String(h.source));
       setHistory((prev) =>
         prev
           ? prev.map((x) =>
-              x.tradeDate === h.tradeDate ? { ...x, executed: !x.executed } : x
+              x.tradeDate === h.tradeDate
+                ? { ...x, executed: x.source === h.source ? !x.executed : false }
+                : x
             )
           : prev
       );
@@ -301,79 +392,46 @@ export function FundDetailModal({
               <span className="faint" style={{ fontSize: 12 }}>暂无记录</span>
             ) : (
               <div className="fund-records">
-                {history.map((h, i) => (
-                  <div
-                    className="fund-record"
-                    key={`${h.tradeDate}-${h.source}`}
-                    style={{ animationDelay: `${Math.min(i, 8) * 45}ms` }}
-                  >
-                    <div className="fund-record-head">
-                      <span className="mono fund-record-date">{h.tradeDate}</span>
-                      <span className={`fund-chip ${ACTION_CLASS[h.action]}`}>
-                        <span className="fund-chip-dot" />
-                        <span className="fund-chip-label">{ACTION_LABEL[h.action]}</span>
-                        {h.amount ? (
-                          <b className="mono fund-chip-amt">¥{h.amount.toLocaleString('zh-CN')}</b>
-                        ) : null}
-                      </span>
-                      <span className="fund-src-badge" data-source={String(h.source)}>
-                        {SOURCE_LABEL[String(h.source)] || String(h.source)}
-                      </span>
-                      {h.amount && canManage ? (
-                        <button
-                          className={`btn sm fund-record-act${h.executed ? ' primary' : ''}`}
-                          onClick={() => void toggleExecuted(h)}
-                          title={h.executed ? '点一下取消「已执行」' : '标记为已执行'}
-                        >
-                          {h.executed ? <Icon name="check" size={12} /> : <Icon name="plus" size={12} />}
-                          {h.executed ? '已执行' : '未执行'}
-                        </button>
-                      ) : h.amount ? (
-                        <span className={`fund-record-state${h.executed ? ' is-done' : ''}`}>
-                          {h.executed ? '已执行' : '未执行'}
-                        </span>
-                      ) : null}
-                    </div>
-
-                    <div className="fund-record-meta">
-                      {h.settledSource === 'deduped' ? (
-                        <span className="fund-record-dup">
-                          同一天已有更高优先级的建议入账，本条仅保留参考
-                        </span>
-                      ) : h.settled ? (
-                        h.settledShares ? (
-                          <>
-                            <span>已结算 · 净值 {(h.settledNav ?? 0).toFixed(4)}</span>
-                            <span>{h.settledShares} 份</span>
-                            {h.settledFee ? <span>费用 ¥{h.settledFee.toFixed(2)}</span> : null}
-                            {h.settledRealized != null ? (
-                              <span>
-                                已实现{' '}
-                                <b className={h.settledRealized >= 0 ? 'up' : 'down'}>
-                                  {h.settledRealized >= 0 ? '+' : ''}
-                                  {h.settledRealized.toFixed(2)}
-                                </b>
-                              </span>
-                            ) : null}
-                          </>
-                        ) : (
-                          <span>无需结算</span>
-                        )
-                      ) : h.executed ? (
-                        <span className="fund-pending">待结算（等收盘净值）</span>
-                      ) : (
-                        <span>未执行，不用结算</span>
+                {dayGroups.map(([date, rows], gi) => {
+                  const adopted = rows.find((r) => r.executed) || null;
+                  // 已采纳：记录里只留这一条；其余收进「未采纳的建议」
+                  const shown = adopted ? [adopted] : rows;
+                  const hidden = adopted ? rows.filter((r) => !r.executed) : [];
+                  const open = Boolean(expanded[date]);
+                  return (
+                    <div className="fund-record-day" key={date}>
+                      {shown.map((h) => renderRecord(h, {
+                        delay: Math.min(gi, 8) * 45,
+                        locked: false,
+                        choosable: Boolean(h.amount) || rows.length > 1,
+                      }))}
+                      {hidden.length > 0 && (
+                        <>
+                          <button
+                            className="fund-record-more"
+                            onClick={() => setExpanded((s) => ({ ...s, [date]: !s[date] }))}
+                          >
+                            <Icon name="chevRight" size={11} />
+                            {open ? '收起' : `另有 ${hidden.length} 条未采纳的建议`}
+                            {!open && <span className="faint">（同一天只能执行一个）</span>}
+                          </button>
+                          {open &&
+                            hidden.map((h) => renderRecord(h, {
+                              delay: 0,
+                              locked: true,
+                              choosable: Boolean(h.amount) || rows.length > 1,
+                            }))}
+                        </>
                       )}
                     </div>
-
-                    {h.summary && <div className="fund-record-summary">{h.summary}</div>}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
             <div className="faint" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.7 }}>
-              定时任务每次都会读取这张表：已执行的记录代表真实仓位变化，
-              未执行的只代表当时的建议。标记后模型能更准确地判断后续操作。
+              同一天可能有多个工具/模型各给一条建议，但只能采纳其中一个——
+              被采纳的那条就是我当天真实做的操作，账本与统计只认它，其余仅作对照。
+              定时任务读取的也是这份「我做过什么」，不含任何来源信息。
             </div>
           </div>
         </>

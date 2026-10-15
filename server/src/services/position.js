@@ -355,6 +355,8 @@ export function settlementAudit(date, options = {}) {
 
 /**
  * 结算某一天（幂等：只处理 settled=0 的记录）。
+ * 只认 executed=1 的那条——它就是我当天真实做的操作，一天只会有一条。
+ * 没被采纳的建议只是候选，不进账本。
  * navMap 由定时任务提供 {code: nav}；拿不到净值的记录保持待结算，等次日补。
  *
  * settledBy 记录「是谁调用结算的」，用于角色分离后的审计；去重只认 settledBy 之外
@@ -366,9 +368,10 @@ export function settleDay(tradeDate, navMap = {}, settledBy = null) {
     .prepare(`SELECT * FROM fund_advice WHERE executed = 1 AND settled = 0 AND trade_date <= ? ORDER BY trade_date, id`)
     .all(tradeDate);
 
-  // 同一基金同一天只入账一条：多来源并存时取优先级最高的那条，其余标记 deduped。
-  // 少了这一步，两只工具各建议一次加仓就会各入账一次，份额直接翻倍——
-  // 这是整个模块最容易出、也最难发现的一类事故
+  // 同一基金同一天只入账一条。正常情况 executed=1 本来就只有一条——
+  // 「执行」是单条互斥的（部分唯一索引强制），用户采纳哪条账本就认哪条。
+  // 这里仍按入账优先级兜底，是为了老库万一还留着同日多条时不至于各写一遍：
+  // 少了这层，份额就会翻倍，是整个模块最难发现的一类事故
   const winnerByKey = new Map();
   for (const row of rows) {
     const key = `${row.code}|${row.trade_date}`;

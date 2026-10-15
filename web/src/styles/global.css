@@ -1301,6 +1301,45 @@ table.data tbody tr:hover {
 .fund-record:hover {
   border-color: color-mix(in srgb, var(--c-accent) 30%, var(--c-border));
 }
+
+/* ---------- 记录按天分组 ---------- */
+.fund-record-day {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* 被采纳的那条：就是我当天真实做的操作，给一点强调 */
+.fund-record.is-adopted {
+  border-color: color-mix(in srgb, var(--c-accent) 34%, var(--c-border));
+  background: color-mix(in srgb, var(--c-accent) 7%, var(--c-surface-2));
+}
+/* 未采纳的候选：只看不选 */
+.fund-record.is-locked {
+  opacity: 0.62;
+}
+.fund-record.is-locked:hover {
+  border-color: var(--c-border);
+}
+.fund-record.is-locked .fund-record-act:disabled {
+  cursor: not-allowed;
+}
+.fund-record-more {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  padding: 2px 2px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--c-text-faint);
+  cursor: pointer;
+  transition: color 0.18s var(--ease);
+}
+.fund-record-more:hover { color: var(--c-text-dim); }
+.fund-record-more svg { transition: transform 0.18s var(--ease); }
 .fund-record-head {
   display: flex;
   align-items: center;

@@ -305,54 +305,69 @@ export function holdingsForAutomation(limit = 12) {
   );
   return holdings.map((h) => ({
     ...h,
-    // 历史按「一天一条」给模型看：同一天多来源并存时只留优先级最高的那条，
-    // 否则模型会以为当天操作了两笔。source 一并发下去，方便它判断是谁的建议
+    // 只下发我真实做过的操作（天然一天一条）。**不带 source**：
+    // 模型只需要知道「哪天对哪只基金做了什么、多少钱」，
+    // 至于是哪个工具建议的与它的判断无关，给了反而会让它去纠结来源
     recent: effectiveHistory(h.code, Math.min(Math.max(Number(limit) || 12, 1), 60)).map((r) => ({
       date: r.tradeDate,
       action: r.action,
       amount: r.amount,
-      executed: r.executed,
-      nav: r.nav,
-      source: r.source,
+      nav: r.settledNav ?? r.nav ?? null,
     })),
   }));
 }
 
 /**
- * 同一基金按「一天一条」折叠：多来源并存时取入账优先级最高的那条。
- * 展示与统计都走这里，避免两只工具的建议被当成两笔真实操作。
+ * 我真实的加减仓历史：只取 executed=1 的记录，天然「一天一条」。
+ * 多工具并存时没被采纳的那些只是候选建议，不是我做过的操作——
+ * 混进来会让人以为当天操作了两笔，模型回看也会被带偏。
  */
 export function effectiveHistory(code, limit = 60) {
-  const rows = adviceHistory(code, 200);
-  const byDate = new Map();
-  for (const r of rows) {
-    const cur = byDate.get(r.tradeDate);
-    if (!cur || sourceRank(r.source) < sourceRank(cur.source)) byDate.set(r.tradeDate, r);
-  }
-  return [...byDate.values()]
+  return adviceHistory(code, 200)
+    .filter((r) => r.executed)
     .sort((a, b) => (a.tradeDate < b.tradeDate ? 1 : a.tradeDate > b.tradeDate ? -1 : 0))
     .slice(0, Math.min(Math.max(Number(limit) || 60, 1), 200));
 }
 
 /**
- * 标记某条建议是否已实际执行（前端由用户点一下）。
+ * 标记某条建议是否被采纳执行（前端由用户点一下）。
  *
- * executed 是「账本语义」——用户真的操作了，不是「这条建议被采纳了」。
- * 所以同一基金同一天的所有来源一起改：否则 WorkBuddy 那条标已执行、
- * Trae 那条没标，模型回看时会以为当天只动了一部分。
+ * 「执行」是单条互斥的：同一只基金同一天最多一条 executed=1。
+ * 那条就是我当天真实做的操作——加减仓记录只显示它，账本也只结算它。
+ * 多个工具/模型同一天各给一条建议是常态，但采纳只能选其中一个，
+ * 选了新的旧的自动落选（数据库的部分唯一索引兜底，应用层绕不过去）。
  */
 export function setAdviceExecuted(code, tradeDate, executed, source) {
   const db = getDb();
+  const s = source ? String(source) : null;
   const rows = db
     .prepare(`SELECT id, source FROM fund_advice WHERE code = ? AND trade_date = ?`)
     .all(code, tradeDate);
   if (!rows.length) return false;
-  if (source && !rows.some((r) => (r.source || 'workbuddy') === source)) return false;
+  const norm = (r) => (r.source || 'workbuddy');
+  // 没指定来源时按展示序挑主建议（手动补记 > 主工具 > 对照工具）
+  const target = s
+    ? rows.find((r) => norm(r) === s)
+    : rows.reduce((m, r) => ((DISPLAY_ORDER[norm(r)] ?? 9) < (DISPLAY_ORDER[norm(m)] ?? 9) ? r : m));
+  if (!target) return false;
+
   const value = executed ? 1 : 0;
-  db.prepare(`UPDATE fund_advice SET executed = ?, updated_at = ? WHERE code = ? AND trade_date = ?`)
-    .run(value, now(), code, tradeDate);
+  const t = now();
+  db.transaction(() => {
+    // 采纳新的之前先把同一天其他建议落选，保证「一天只执行一个建议」
+    if (value === 1) {
+      db.prepare(
+        `UPDATE fund_advice SET executed = 0, updated_at = ?
+          WHERE code = ? AND trade_date = ? AND id <> ? AND executed = 1`
+      ).run(t, code, tradeDate, target.id);
+    }
+    db.prepare(`UPDATE fund_advice SET executed = ?, updated_at = ? WHERE id = ?`).run(value, t, target.id);
+  })();
   return true;
 }
+
+/** 展示序：手动补记 > 主工具 > 对照工具。只影响页面挑哪条，与账本入账优先级无关 */
+const DISPLAY_ORDER = { manual: 0, workbuddy: 1, trae: 2 };
 
 /**
  * 手动补记一笔实际操作：覆盖当天该基金的建议，并直接标记为已执行。
@@ -373,8 +388,14 @@ export function upsertManualRecord({ code, tradeDate, action, amount, nav, note 
 
   const db = getDb();
   const t = now();
+  // 手动补记就是「我实际做了什么」，比任何建议都可信。
+  // 先让同一天其他来源落选，否则会撞上「一天只能执行一条」的唯一约束
+  db.prepare(
+    `UPDATE fund_advice SET executed = 0, updated_at = ?
+      WHERE code = ? AND trade_date = ? AND IFNULL(source,'workbuddy') <> 'manual' AND executed = 1`
+  ).run(t, c, d);
   // 手动补记写进独立的 manual 格子：不覆盖两只工具各自的判断，
-  // 但入账优先级最高（用户自己说"我实际买了"永远比模型的建议可信）
+  // 但优先级最高（用户自己说"我实际买了"永远比模型的建议可信）
   const info = db
     .prepare(
       `INSERT INTO fund_advice
