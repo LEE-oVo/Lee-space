@@ -177,10 +177,13 @@ export function FundDetailModal({
 
       {canDetail && (
         <>
-          {advice?.stale && (
+          {/* 真实净值后来补上了（结算入库）就不再提示——那是建议生成那一刻的状态 */}
+          {advice?.stale
+            && !(position?.navDate && advice.tradeDate && position.navDate >= advice.tradeDate) && (
             <div className="fund-stale">
               <Icon name="alert" size={13} />
-              当日净值尚未更新，以上基于收盘估值，仅供参考
+              生成建议时未取到当日官方估值，涨跌幅按标的指数代替
+              {advice?.navDate ? `（净值日期 ${advice.navDate}）` : ''}，仅供参考
             </div>
           )}
 

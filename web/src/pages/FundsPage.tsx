@@ -65,6 +65,15 @@ function profit(cost: number | null, price: number | null) {
   return ((price - cost) / cost) * 100;
 }
 
+/** 净值序列最后两点的日涨跌；数据不足时返回 null，交给调用方回退 */
+function navChangeOf(points?: FundNavPoint[]) {
+  if (!points || points.length < 2) return null;
+  const prev = points[points.length - 2]?.nav;
+  const last = points[points.length - 1]?.nav;
+  if (!prev || !last) return null;
+  return ((last - prev) / prev) * 100;
+}
+
 interface DetailTarget {
   code: string;
   name: string;
@@ -174,13 +183,24 @@ export function FundsPage() {
     const all = allOf(code);
     const advice = all[0];
     const name = holding?.name || advice?.summary || code;
-    const price = advice?.estimate ?? advice?.nav ?? null;
-    const profitPct = canDetail ? profit(holding?.cost ?? null, price) : null;
     const pos = positions[code];
     const pts = series[code];
+    // 结算后库里的最新真实净值（fund_nav 最新一条）优先于建议里带的净值。
+    // 建议里的 nav 常常是建议日的前一天，结算完还显示它，就会跟同一张卡片上的
+    // 市值/盈亏对不上——那两栏用的是真实净值
+    const latestNav = pos?.nav ?? advice?.nav ?? null;
+    const latestNavDate = pos?.navDate ?? advice?.navDate ?? null;
+    const price = latestNav ?? advice?.estimate ?? null;
+    const profitPct = canDetail ? profit(holding?.cost ?? null, price) : null;
+    // 涨跌按净值序列自己算，别把建议日的涨跌幅套到别的日期上
+    const navPct = navChangeOf(pts)
+      ?? (latestNavDate && advice && latestNavDate === advice.navDate ? advice.navPct : null);
     // 同一天两只工具方向相反 → 明确标出来，别让用户自己去两条记录里对
     const conflict = all.length > 1
       && new Set(all.map((a) => directionOf(a.action))).size > 1;
+    // 建议标了 stale，但后来真实净值补上了（结算入库）→ 不算延迟
+    const staleNow = Boolean(advice?.stale)
+      && !(latestNavDate && advice?.tradeDate && latestNavDate >= advice.tradeDate);
 
     return (
       <div
@@ -213,7 +233,17 @@ export function FundsPage() {
                 <span className="fund-chip-label">暂无建议</span>
               </span>
             )}
-            {canDetail && advice?.stale && <span className="fund-tag is-warn">数据延迟</span>}
+            {/* stale 说的是「生成建议时没取到官方估值、用的是估算口径」。
+                一旦该交易日真实净值已入库，数据就不延迟了，再挂着警告只会误导 */}
+            {canDetail && staleNow && (
+              <span
+                className="fund-tag is-warn"
+                title={`生成建议时未取到当日官方估值，涨跌幅按标的指数代替；净值日期 ${advice?.navDate || '未知'}`}
+              >
+                <Icon name="alert" size={11} />
+                估算口径
+              </span>
+            )}
             {canDetail && advice?.executed && !advice.settled && (
               <span className="fund-tag is-warn">
                 <Icon name="clock" size={11} />
@@ -231,11 +261,13 @@ export function FundsPage() {
 
         <div className="fund-metrics">
           <div className="fund-metric">
-            <span className="fund-metric-label">最新净值</span>
+            <span className="fund-metric-label">
+              最新净值{latestNavDate ? ` ${latestNavDate.slice(5)}` : ''}
+            </span>
             <span className="fund-metric-value mono">
-              {advice?.nav ?? '—'}
-              {advice?.navPct !== null && advice?.navPct !== undefined && (
-                <span className={`fund-sub ${toneClass(advice.navPct)}`}> {pctText(advice.navPct)}</span>
+              {latestNav ?? '—'}
+              {navPct !== null && navPct !== undefined && (
+                <span className={`fund-sub ${toneClass(navPct)}`}> {pctText(navPct)}</span>
               )}
             </span>
           </div>
