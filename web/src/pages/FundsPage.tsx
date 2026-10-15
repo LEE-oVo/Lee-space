@@ -37,7 +37,12 @@ const ACTION_ACTIVE: Record<FundAction, boolean> = {
 
 // 入账优先级，必须与服务端 FUND_SETTLE_PRIORITY 保持一致：
 // 「合并」视图里用同一套规则挑出主建议，否则页面显示的和真正入账的会不是同一条
+// 入账优先级：同一天多来源并存时，账本认排在最前的那条（与服务端 FUND_SETTLE_PRIORITY 一致）
 const SOURCE_PRIORITY: Record<string, number> = { manual: 0, trae: 1, workbuddy: 2 };
+
+// 页面主展示顺序：主工具优先，对照工具靠后。与上面刻意分开——
+// 一个管「账本认哪条」，一个管「给谁看」。Trae 退为对照后不该占主位
+const DISPLAY_RANK: Record<string, number> = { manual: 0, workbuddy: 1, trae: 2 };
 
 function sourceRank(source: string) {
   return SOURCE_PRIORITY[source] ?? 9;
@@ -96,7 +101,9 @@ export function FundsPage() {
   const [series, setSeries] = useState<Record<string, FundNavPoint[]>>({});
   const [detail, setDetail] = useState<DetailTarget | null>(null);
   const [expandSummary, setExpandSummary] = useState(false);
-  const [source, setSource] = useState<string>('all');
+  // 默认看主工具的判断；Trae 只在我想额外对照时才切过去。
+  // 若 WorkBuddy 恰好没有数据（例如刚接入），加载后会自动回退到合并视图
+  const [source, setSource] = useState<string>('workbuddy');
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -105,6 +112,12 @@ export function FundsPage() {
       setData(d);
       setPositions(d.positions || {});
       setError('');
+      // 默认来源在该来源还没数据时回退，避免一进来就是空白页
+      const has = (s: string) => (d.advice || []).some((a) => (a.source || 'workbuddy') === s);
+      setSource((cur) => {
+        if (cur !== 'all' && has(cur)) return cur;
+        return has('workbuddy') ? 'workbuddy' : 'all';
+      });
       const codes = Array.from(
         new Set([...d.holdings.map((h) => h.code), ...d.advice.map((a) => a.code)])
       );
@@ -149,9 +162,21 @@ export function FundsPage() {
 
   const sourceLabels: Record<string, string> = data.sourceLabels || {};
   const labelOf = (s: string) => sourceLabels[s] || s;
-  // 只有一个来源时不显示切换器，页面跟以前完全一样
+  // 只有一个来源时不显示切换器，页面跟以前完全一样。
+  // 顺序固定为「主工具 → 其他来源 → 合并」：主视图就在最左边，
+  // 每个 tab 带自己最新建议的日期，一眼能看出哪个来源没跟上
+  const latestDate = (data.sources || []).reduce<string | null>(
+    (m, s) => (!m || (s.lastDate && s.lastDate > m) ? s.lastDate || m : m),
+    null
+  );
   const sourceTabs = (data.sources || []).length > 1
-    ? [{ source: 'all', label: '合并' }, ...(data.sources || []).map((s) => ({ source: s.source, label: s.label }))]
+    ? [
+        ...(data.sources || [])
+          .slice()
+          .sort((a, b) => (a.source === 'workbuddy' ? -1 : b.source === 'workbuddy' ? 1 : 0))
+          .map((s) => ({ source: s.source, label: s.label, lastDate: s.lastDate })),
+        { source: 'all', label: '合并', lastDate: latestDate },
+      ]
     : [];
   // 切了来源但那个来源还没数据时的兜底：退回合并视图的口径，不留空白页
   const settleNote = (data.settleSources || []).length === 1
@@ -167,7 +192,15 @@ export function FundsPage() {
     grouped.set(a.code, list);
   }
   for (const list of grouped.values()) {
-    list.sort((x, y) => sourceRank(x.source) - sourceRank(y.source));
+    // 展示顺序：日期新的在前；同一天优先主工具（手动补记 > WorkBuddy > Trae）。
+    // 注意和入账优先级 sourceRank(manual > trae > workbuddy) 是两回事——
+    // 那是决定账本认哪条，这是决定页面主展示哪条。Trae 退为对照后不该压过主工具，
+    // 否则它停更几天、或同一天给出另一套判断时，页面主位显示的就不是主工具的结论
+    list.sort((x, y) => {
+      const byDate = String(y.tradeDate || '').localeCompare(String(x.tradeDate || ''));
+      if (byDate !== 0) return byDate;
+      return (DISPLAY_RANK[x.source] ?? 9) - (DISPLAY_RANK[y.source] ?? 9);
+    });
   }
   const allOf = (code: string) => grouped.get(code) || [];
 
@@ -195,9 +228,23 @@ export function FundsPage() {
     // 涨跌按净值序列自己算，别把建议日的涨跌幅套到别的日期上
     const navPct = navChangeOf(pts)
       ?? (latestNavDate && advice && latestNavDate === advice.navDate ? advice.navPct : null);
-    // 同一天两只工具方向相反 → 明确标出来，别让用户自己去两条记录里对
-    const conflict = all.length > 1
-      && new Set(all.map((a) => directionOf(a.action))).size > 1;
+    // 只有同一天的两条建议方向相反才算真冲突。
+    // 跨日期的方向不同不代表两个工具吵起来了，多半只是另一个来源没跑
+    const sameDayOthers = advice
+      ? all.filter((a) => a.source !== advice.source && a.tradeDate === advice.tradeDate)
+      : [];
+    const conflict = Boolean(advice)
+      && sameDayOthers.length > 0
+      && new Set([advice, ...sameDayOthers].map((a) => directionOf(a.action))).size > 1;
+    // 真正入账的那条按入账优先级算，未必是页面主展示的这条——
+    // 两个顺序现在是分开的，这里必须按账本口径说，不能说错
+    const settleWinner = advice
+      ? [advice, ...sameDayOthers].reduce((m, a) => (sourceRank(a.source) < sourceRank(m.source) ? a : m))
+      : null;
+    // 日期更早的其他来源：保留入口但说清楚是哪天的，别让人当成今天的判断
+    const olderOthers = advice
+      ? all.filter((a) => a.source !== advice.source && a.tradeDate < advice.tradeDate)
+      : [];
     // 建议标了 stale，但后来真实净值补上了（结算入库）→ 不算延迟
     const staleNow = Boolean(advice?.stale)
       && !(latestNavDate && advice?.tradeDate && latestNavDate >= advice.tradeDate);
@@ -250,10 +297,11 @@ export function FundsPage() {
                 待结算
               </span>
             )}
-            {/* 合并视图下标出主建议是谁给的；单来源时不显示，避免多余噪音 */}
-            {source === 'all' && advice && sourceTabs.length > 0 && (
+            {/* 建议不是主工具给的、或在合并视图下 → 标出来源与日期。
+                单来源且是 WorkBuddy 时不显示，避免多余噪音 */}
+            {advice && sourceTabs.length > 0 && (source === 'all' || advice.source !== 'workbuddy') && (
               <span className="fund-src-badge" data-source={advice.source}>
-                {labelOf(advice.source)}
+                {labelOf(advice.source)} {advice.tradeDate.slice(5)}
               </span>
             )}
           </div>
@@ -320,15 +368,17 @@ export function FundsPage() {
           </div>
         )}
 
-        {conflict && (
+        {conflict && advice && (
           <div className="fund-conflict">
             <span className="fund-conflict-icon">
               <Icon name="alert" size={12} />
             </span>
             <div className="fund-conflict-body">
-              <div className="fund-conflict-title">两只工具判断不一致</div>
+              <div className="fund-conflict-title">
+                {advice.tradeDate.slice(5)} 两只工具判断不一致
+              </div>
               <div className="fund-conflict-rows">
-                {all.map((a) => (
+                {[advice, ...sameDayOthers].map((a) => (
                   <div className="fund-conflict-row" key={a.source}>
                     <span className="fund-src-badge" data-source={a.source}>{labelOf(a.source)}</span>
                     <span className={`fund-conflict-act ${directionOf(a.action)}`}>
@@ -339,9 +389,20 @@ export function FundsPage() {
                 ))}
               </div>
               <div className="fund-conflict-foot">
-                入账时只认{labelOf(all[0].source)}的这条——账本只有一本，不会两只都算
+                {settleWinner
+                  ? `入账时只认${labelOf(settleWinner.source)}的这条——账本只有一本，不会两只都算`
+                  : '账本只有一本，不会两只都算'}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* 其他来源停在更早的日期：只是没跟上，不是分歧，用更轻的提示 */}
+        {!conflict && olderOthers.length > 0 && advice && (
+          <div className="fund-older-note">
+            <Icon name="clock" size={11} />
+            另有 {olderOthers.map((a) => `${labelOf(a.source)} ${a.tradeDate.slice(5)}`).join('、')}
+            的判断（早于 {advice.tradeDate.slice(5)}），切换来源可查看
           </div>
         )}
 
@@ -465,11 +526,29 @@ export function FundsPage() {
                 aria-selected={source === t.source}
                 className={`fund-source-tab${source === t.source ? ' is-on' : ''}`}
                 onClick={() => setSource(t.source)}
+                title={t.lastDate ? `最新建议日期 ${t.lastDate}` : undefined}
               >
                 {t.label}
+                {t.lastDate ? (
+                  <span
+                    className={`fund-tab-date${latestDate && t.lastDate < latestDate ? ' is-old' : ''}`}
+                  >
+                    {t.lastDate.slice(5)}
+                  </span>
+                ) : null}
               </button>
             ))}
-            {settleNote && <span className="fund-source-note">{settleNote}</span>}
+            {/* 有来源落后时点破：那个日期不是最新的，别拿它当当前判断 */}
+            {(() => {
+              const notes = [];
+              if (settleNote) notes.push(settleNote);
+              if (latestDate && sourceTabs.some((t) => t.lastDate && t.lastDate < latestDate)) {
+                notes.push('灰色日期＝该来源最近一次分析的时间');
+              }
+              return notes.length > 0
+                ? <span className="fund-source-note">{notes.join(' · ')}</span>
+                : null;
+            })()}
           </div>
         )}
 

@@ -1416,6 +1416,32 @@ table.data tbody tr:hover {
   color: var(--c-text-faint);
   white-space: nowrap;
 }
+/* tab 上的日期：落后于最新日期的显示成灰色，提示这不是当前判断 */
+.fund-tab-date {
+  margin-left: 5px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.62;
+}
+.fund-source-tab.is-on .fund-tab-date { opacity: 0.85; }
+.fund-tab-date.is-old {
+  color: var(--c-text-faint);
+  opacity: 0.9;
+}
+.fund-source-tab.is-on .fund-tab-date.is-old { color: color-mix(in srgb, var(--c-accent-contrast) 70%, transparent); }
+
+/* ---------- 落后提示：另一个来源停在更早的日期，只是没跟上 ---------- */
+.fund-older-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--c-text-faint);
+  animation: fund-rise 0.4s var(--ease) backwards;
+}
+.fund-older-note svg { flex: 0 0 auto; opacity: 0.75; }
 
 /* ---------- 来源徽标：一眼看出这条建议出自哪个工具 ---------- */
 .fund-src-badge {
