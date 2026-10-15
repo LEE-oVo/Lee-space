@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requirePermission, denyGuest, requireFundIngest, requireFundSettle, clientIp, hasPermission } from '../middleware/auth.js';
 import { writeAudit } from '../db/repo.js';
 import { config } from '../config.js';
-import { holdingView, pendingSettlements, settleDay, updateFees, investmentSummary } from '../services/position.js';
+import { holdingView, pendingSettlements, settleDay, updateFees, investmentSummary, settlementAudit } from '../services/position.js';
 import { getFundConfig, updateFundConfig } from '../services/fundConfig.js';
 import {
   FUND_ACTIONS,
@@ -22,6 +22,7 @@ import {
   publicAdvice,
   publicHolding,
   setAdviceExecuted,
+  saveNavPoints,
   todayAllocation,
   updateHolding,
   upsertManualRecord,
@@ -179,6 +180,49 @@ router.get('/pending', requireFundIngest, (_req, res) => {
     })),
     count: rows.length,
   });
+});
+
+// 结算任务的第一步（推荐）：先核对，再决定「结算」还是「只补齐」。
+// 手动触发与定时触发共用这套幂等结果——已经入账的记录不会再动，
+// 所以谁先跑谁结算，后跑的只会补上前者没拿到的数据，两者互不干扰。
+router.get('/settle-plan', requireFundIngest, (req, res) => {
+  const date = String(req.query.date || todayStr());
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'date 格式应为 YYYY-MM-DD' });
+  }
+  const plan = settlementAudit(date, { lookbackDays: Number(req.query.lookback) || 10 });
+  res.json({
+    source: req.fundSource,
+    canSettle: config.fundSettleSources.length === 0 || config.fundSettleSources.includes(req.fundSource),
+    ...plan,
+  });
+});
+
+// 只补净值序列，不碰账本：用于补齐手动结算漏抓的历史净值。
+// 写在 fund_nav 上而不是直接结算，是因为结算只能按当天净值入账，
+// 历史缺口必须先有净值，挂起记录才结得掉。
+router.post('/nav-backfill', requireFundIngest, (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (items.length === 0) return res.status(400).json({ error: 'items 为空' });
+  if (items.length > 2000) return res.status(400).json({ error: '一次最多补 2000 条净值' });
+
+  const groups = new Map();
+  const rejected = [];
+  for (const it of items) {
+    const code = String(it?.code || '').trim();
+    const d = String(it?.date || '').trim();
+    const nav = Number(it?.nav);
+    if (!CODE_RE.test(code) || !/^\d{4}-\d{2}-\d{2}$/.test(d) || !Number.isFinite(nav) || nav <= 0) {
+      rejected.push({ code, date: d, nav: it?.nav ?? null });
+      continue;
+    }
+    if (!groups.has(code)) groups.set(code, []);
+    groups.get(code).push({ date: d, nav });
+  }
+
+  let written = 0;
+  for (const [code, points] of groups) written += saveNavPoints(code, points);
+  return res.json({ ok: true, written, rejectedCount: rejected.length, rejected: rejected.slice(0, 20) });
 });
 
 // 结算任务的第二步：带上真实净值回来入账（幂等，只处理 settled=0）

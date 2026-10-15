@@ -222,6 +222,137 @@ export function pendingSettlements() {
     }));
 }
 
+/** 日期加减天数（UTC 基准，避免时区把日期挪偏） */
+function shiftDate(date, days) {
+  const t = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(t)) return date;
+  return new Date(t + days * 86400000).toISOString().slice(0, 10);
+}
+
+/**
+ * 结算前的核对报告。定时任务先读它，再决定「直接结算」还是「只补齐」——
+ * 手动触发（WorkBuddy 手动执行 / Trae 兜底）和定时触发走的是同一套幂等逻辑：
+ * 入过账的记录不会再动，谁先跑谁结算，后跑的自动转成核对与补齐，
+ * 所以手动触发多少次都不会影响定时任务每日照常执行。
+ */
+export function settlementAudit(date, options = {}) {
+  const db = getDb();
+  const lookback = Math.min(Math.max(Number(options.lookbackDays) || 10, 1), 60);
+  const from = shiftDate(date, -lookback);
+
+  const pending = db
+    .prepare(
+      `SELECT * FROM fund_advice
+        WHERE executed = 1 AND settled = 0 AND trade_date <= ?
+        ORDER BY trade_date, id`
+    )
+    .all(date)
+    .map((r) => ({
+      code: r.code,
+      date: r.trade_date,
+      action: r.action,
+      amount: r.amount,
+      source: r.source || 'workbuddy',
+    }));
+
+  // 交易日不排假日历，而是用「当天有没有任何数据」反推：
+  // 任一基金有净值、或任一建议记录存在，就认为是交易日。
+  // 节假日自然一条数据都没有，不会被误报成缺失
+  const navDays = db
+    .prepare(`SELECT DISTINCT nav_date d FROM fund_nav WHERE nav_date BETWEEN ? AND ?`)
+    .all(from, date)
+    .map((r) => r.d);
+  const adviceDays = db
+    .prepare(`SELECT DISTINCT trade_date d FROM fund_advice WHERE trade_date BETWEEN ? AND ?`)
+    .all(from, date)
+    .map((r) => r.d);
+  const tradeDays = [...new Set([...navDays, ...adviceDays])].sort();
+
+  const codes = db
+    .prepare(`SELECT code FROM fund_holdings WHERE status = 'active' ORDER BY sort_order, id`)
+    .all()
+    .map((r) => r.code);
+  const have = new Set(
+    db
+      .prepare(`SELECT code c, nav_date d FROM fund_nav WHERE nav_date BETWEEN ? AND ?`)
+      .all(from, date)
+      .map((r) => `${r.c}|${r.d}`)
+  );
+
+  // 走势图与结算都依赖 fund_nav：缺一天，市值曲线就断一截，
+  // 挂起的记录也会因为查不到净值而一直结不掉
+  const navGaps = [];
+  for (const code of codes) {
+    const missing = tradeDays.filter((d) => !have.has(`${code}|${d}`));
+    if (missing.length > 0) navGaps.push({ code, dates: missing });
+  }
+
+  // 待结算却还查不到当日净值的——这就是结算卡住的直接原因，优先补这些
+  const missingNav = pending
+    .filter((p) => navOn(p.code, p.date) === null)
+    .map((p) => ({ code: p.code, date: p.date, action: p.action }));
+
+  const settled = db
+    .prepare(
+      `SELECT code, trade_date, action, amount, settled_nav, settled_shares,
+              settled_fee, settled_amount, settled_realized, settled_source, updated_at
+         FROM fund_advice
+        WHERE settled = 1 AND trade_date BETWEEN ? AND ?
+        ORDER BY trade_date DESC, id DESC`
+    )
+    .all(from, date)
+    .map((r) => ({
+      code: r.code,
+      date: r.trade_date,
+      action: r.action,
+      amount: r.amount,
+      nav: r.settled_nav ?? null,
+      shares: r.settled_shares ?? null,
+      fee: r.settled_fee ?? null,
+      settledAmount: r.settled_amount ?? null,
+      realized: r.settled_realized ?? null,
+      settledBy: r.settled_source || null,
+      at: r.updated_at || null,
+    }));
+
+  // 净值跳变异常：场外基金单日涨跌 20% 以上极罕见，多半是抓错了日期或脏数据。
+  // 只提示不自动改，改账本这件事必须留给人工确认
+  const anomalies = [];
+  for (const code of codes) {
+    const series = db
+      .prepare(`SELECT nav_date, nav FROM fund_nav WHERE code = ? AND nav_date BETWEEN ? AND ? ORDER BY nav_date`)
+      .all(code, from, date);
+    for (let i = 1; i < series.length; i += 1) {
+      const prev = Number(series[i - 1].nav);
+      const cur = Number(series[i].nav);
+      if (!prev || !cur) continue;
+      const pct = ((cur - prev) / prev) * 100;
+      if (Math.abs(pct) >= 20) {
+        anomalies.push({ code, date: series[i].nav_date, prevDate: series[i - 1].nav_date, pct: Math.round(pct * 100) / 100 });
+      }
+    }
+  }
+
+  const last = db.prepare(`SELECT MAX(updated_at) t FROM fund_advice WHERE settled = 1`).get();
+
+  return {
+    date,
+    from,
+    lookbackDays: lookback,
+    tradeDays,
+    // 给任务看的两个开关：needSettle 决定要不要结算，clean 表示今天没活儿干
+    needSettle: pending.length > 0,
+    clean: pending.length === 0 && navGaps.length === 0 && anomalies.length === 0,
+    pendingCount: pending.length,
+    pending,
+    missingNav,
+    navGaps,
+    settled,
+    anomalies,
+    lastSettledAt: last?.t || null,
+  };
+}
+
 /**
  * 结算某一天（幂等：只处理 settled=0 的记录）。
  * navMap 由定时任务提供 {code: nav}；拿不到净值的记录保持待结算，等次日补。
