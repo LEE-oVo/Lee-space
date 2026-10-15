@@ -779,7 +779,36 @@ export function ingestAdvice(payload, options = {}) {
   // 传 tradeDate：当天已排但未执行的加仓也要算进占用，
   // 否则两个工具同一天各排一笔就能把总额排穿
   const invest = investmentSummary(cfg, tradeDate);
-  const { adjusted } = applyBudget(normalized, tradeDate, source, cfg, invest);
+
+  // 一天内重复跑任务：唯一键 (code, trade_date, source) 决定它是**覆盖**而不是新增，
+  // 所以不会攒出多条记录、也不会重复占用额度。
+  //
+  // 但**已经落地的事实不能被机器改写**：已采纳（我实际下单了）或已结算（账本已入账）
+  // 的那条记录代表真实发生的操作。若新的判断把它覆盖掉，就会出现
+  // 「记录写 300、账本按 200 入账」这种对不上的事故，而且没有任何提示。
+  // 这些条目跳过不写，并在响应里报告，让任务汇报时点出来
+  const stateStmt = db.prepare(
+    `SELECT executed, settled FROM fund_advice
+      WHERE code = ? AND trade_date = ? AND IFNULL(source,'workbuddy') = ?`
+  );
+  const locked = [];
+  const writable = [];
+  for (const row of normalized) {
+    const cur = stateStmt.get(row.code, row.tradeDate, row.source);
+    if (cur && (Number(cur.executed) === 1 || Number(cur.settled) === 1)) {
+      locked.push({
+        code: row.code,
+        action: row.action,
+        amount: row.amount,
+        lockedBy: Number(cur.settled) === 1 ? '已结算' : '已采纳',
+      });
+    } else {
+      writable.push(row);
+    }
+  }
+
+  // 额度只对真正要写入的条目计算：被保护的那些金额没变，占用也就不变
+  const { adjusted } = applyBudget(writable, tradeDate, source, cfg, invest);
 
   const upsert = db.prepare(
     `INSERT INTO fund_advice
@@ -815,6 +844,9 @@ export function ingestAdvice(payload, options = {}) {
       }
     }
     for (const item of navPoints) saveNavPoints(item.code, item.points);
+    // 一条都没写进去时不刷新整体结论，免得页面头部换成新的说法、
+    // 卡片却还是旧建议，看起来像没跑成功
+    if (rows.length === 0) return;
     daily.run({
       tradeDate,
       source,
@@ -828,13 +860,16 @@ export function ingestAdvice(payload, options = {}) {
       now: now(),
     });
   });
-  run(normalized);
+  run(writable);
 
   return {
     ok: true,
-    accepted: normalized.length,
+    accepted: writable.length,
     tradeDate,
     source,
+    // 被保护跳过的条目：该基金当天已被采纳或已结算，新的判断没有覆盖它。
+    // 任务汇报时要说明，否则会以为写进去了
+    skipped: locked,
     // 被额度拦截而削减/改持有的条目：非空的 adjusted 说明模型报超了，任务汇报要点出来
     budget: {
       adjusted,
