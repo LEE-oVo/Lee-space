@@ -352,11 +352,18 @@ cost/shares/amount，建议不含 reason/risks/sources，响应里带 `scope: "p
 ### 写入令牌与会话体系完全隔离：
 
 ```bash
-cd /opt/workbench/server && sudo node src/scripts/rotate-fund-token.js   # 生成/轮换
+cd /opt/workbench/server && sudo node src/scripts/rotate-fund-token.js          # 轮换 workbuddy
+cd /opt/workbench/server && sudo node src/scripts/rotate-fund-token.js glm      # 给新模型发一个
 sudo systemctl restart workbench
 ```
 
-- 令牌存 `.env` 的 `FUND_INGEST_TOKEN`（600，**不入库**），留空则接口直接 503 关闭
+- 令牌存 `.env` 的 `FUND_INGEST_TOKENS`（600，**不入库**），格式为
+  `workbuddy:wbk_xxx,trae:wbk_yyy,glm:wbk_zzz`——**来源由用哪个令牌唯一决定**，
+  任务 payload 里自报 `source` 一律忽略。接入新模型只改这一行，代码不用动。
+  留空则接口直接 503 关闭
+- 旧写法 `FUND_INGEST_TOKEN` / `FUND_INGEST_TOKEN_TRAE` 仍认，首次轮换会自动并入新行
+- 来源标签默认内置（workbuddy/trae/glm/manual），可用
+  `FUND_SOURCE_LABELS="foo:某某模型"` 补充
 - 只授予「写建议 + 读持仓」，即使泄露也无法操作服务器或访问其他接口
 - 用 `timingSafeEqual` 做常量时间比较，避免时序侧信道
 - 轮换后需同步更新定时任务里的 Authorization 头

@@ -82,13 +82,13 @@ function bearerMatches(header, token) {
 // 基金建议写入：使用独立令牌而不是登录会话。
 // 令牌只授予「写建议 + 读持仓」，即使泄露也无法操作服务器或访问其他接口。
 //
-// 双工具隔离的关键：来源由「用哪个令牌」唯一决定，不接受任务里自报 source。
-// 这样即使某个模型的提示词被改坏或串了，也不会把别人的建议写进别人的格子。
-// 主令牌 → workbuddy；Trae 专用令牌 → trae。
+// 多工具隔离的关键：来源由「用哪个令牌」唯一决定，不接受任务里自报 source。
+// 令牌→来源的映射写在 FUND_INGEST_TOKENS 里，这里只做反查——
+// 接入新模型不需要改这个文件，配一个新令牌即可
 export function requireFundIngest(req, res, next) {
-  const configured = [config.fundIngestToken, config.fundIngestTokenTrae].filter(Boolean);
-  if (!configured.length) {
-    return res.status(503).json({ error: '服务端未配置 FUND_INGEST_TOKEN，写入接口已关闭' });
+  const entries = Object.entries(config.fundIngestTokens || {});
+  if (!entries.length) {
+    return res.status(503).json({ error: '服务端未配置 FUND_INGEST_TOKEN(S)，写入接口已关闭' });
   }
 
   const header = String(req.headers.authorization || '');
@@ -98,13 +98,11 @@ export function requireFundIngest(req, res, next) {
   const presented = header.slice(7).trim();
   if (!presented) return res.status(401).json({ error: '缺少 Bearer 令牌' });
 
-  if (bearerMatches(presented, config.fundIngestTokenTrae)) {
-    req.fundSource = 'trae';
-    return next();
-  }
-  if (bearerMatches(presented, config.fundIngestToken)) {
-    req.fundSource = 'workbuddy';
-    return next();
+  for (const [source, token] of entries) {
+    if (bearerMatches(presented, token)) {
+      req.fundSource = source;
+      return next();
+    }
   }
   return res.status(401).json({ error: '令牌无效' });
 }

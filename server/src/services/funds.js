@@ -366,8 +366,10 @@ export function setAdviceExecuted(code, tradeDate, executed, source) {
   return true;
 }
 
-/** 展示序：手动补记 > 主工具 > 对照工具。只影响页面挑哪条，与账本入账优先级无关 */
-const DISPLAY_ORDER = { manual: 0, workbuddy: 1, trae: 2 };
+// 展示序：手动补记 > 主工具 > 定期跑的对照模型 > 手动兜底。
+// 只影响「没指定来源时页面挑哪条」，与账本入账优先级（sourceRank）无关。
+// 之后新接入的来源不在表里，?? 9 排在最后，不会挤掉已知来源
+const DISPLAY_ORDER = { manual: 0, workbuddy: 1, glm: 2, trae: 3 };
 
 /**
  * 手动补记一笔实际操作：覆盖当天该基金的建议，并直接标记为已执行。
@@ -472,20 +474,36 @@ export function latestAdvice(source) {
     .map(mapAdvice);
 }
 
-/** 库里实际存在哪些来源，前端据此决定要不要显示来源切换 */
+/**
+ * 页面上会出现哪些来源入口。
+ * 取「已配置令牌的来源」∪「库里实际写过的来源」——
+ * 前者保证某个工具今天没跑也能在 tab 上看到它（日期空白/落后即提示），
+ * 而不是悄悄消失；后者保住历史来源与手动补记。manual 不主动占位，
+ * 它只在真有补记记录时出现（它不是一条分析途径）
+ */
 export function adviceSources() {
   const rows = getDb()
     .prepare(
       `SELECT IFNULL(source,'workbuddy') AS source, COUNT(*) AS n, MAX(trade_date) AS last
-         FROM fund_advice GROUP BY source ORDER BY n DESC`
+         FROM fund_advice GROUP BY source`
     )
     .all();
-  return rows.map((r) => ({
-    source: r.source,
-    label: SOURCE_LABELS[r.source] || r.source,
-    count: r.n,
-    lastDate: r.last,
-  }));
+  const bySource = new Map(rows.map((r) => [r.source, r]));
+  for (const s of FUND_SOURCES) {
+    if (s === 'manual') continue;
+    if (!bySource.has(s)) bySource.set(s, { source: s, n: 0, last: null });
+  }
+  return [...bySource.values()]
+    .sort((a, b) => {
+      if ((a.n > 0) !== (b.n > 0)) return a.n > 0 ? -1 : 1;
+      return String(b.last || '').localeCompare(String(a.last || ''));
+    })
+    .map((r) => ({
+      source: r.source,
+      label: SOURCE_LABELS[r.source] || r.source,
+      count: r.n,
+      lastDate: r.last,
+    }));
 }
 
 export function adviceHistory(code, limit = 10, source) {

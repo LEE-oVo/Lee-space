@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
@@ -40,9 +40,13 @@ const ACTION_ACTIVE: Record<FundAction, boolean> = {
 // 入账优先级：同一天多来源并存时，账本认排在最前的那条（与服务端 FUND_SETTLE_PRIORITY 一致）
 const SOURCE_PRIORITY: Record<string, number> = { manual: 0, trae: 1, workbuddy: 2 };
 
-// 页面主展示顺序：主工具优先，对照工具靠后。与上面刻意分开——
-// 一个管「账本认哪条」，一个管「给谁看」。Trae 退为对照后不该占主位
-const DISPLAY_RANK: Record<string, number> = { manual: 0, workbuddy: 1, trae: 2 };
+// 页面主展示顺序：主工具优先，定期跑的对照模型次之，手动触发的 Trae 最后。
+// 与上面刻意分开——一个管「账本认哪条」，一个管「给谁看」。
+// Trae 退为手动兜底后不该占主位，否则它停更几天、或同一天给出另一套判断时，
+// 页面主位显示的就不是主工具的结论。
+// 新接入的模型（glm 等）只要服务端配了令牌就会自动出现在这里，
+// 没显式配置的来源排最后（?? 9），不会挤掉已知来源的顺序
+const DISPLAY_RANK: Record<string, number> = { manual: 0, workbuddy: 1, glm: 2, trae: 3 };
 
 function sourceRank(source: string) {
   return SOURCE_PRIORITY[source] ?? 9;
@@ -104,6 +108,9 @@ export function FundsPage() {
   // 默认看主工具的判断；Trae 只在我想额外对照时才切过去。
   // 若 WorkBuddy 恰好没有数据（例如刚接入），加载后会自动回退到合并视图
   const [source, setSource] = useState<string>('workbuddy');
+  // 用户是否手动切过来源。切过就尊重他的选择：新接入的来源还没数据时也要留在那儿，
+  // 页面有「还没有投过建议」的空态；只有初次加载才做回退，避免一进来就是空白页
+  const userPicked = useRef(false);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -115,7 +122,7 @@ export function FundsPage() {
       // 默认来源在该来源还没数据时回退，避免一进来就是空白页
       const has = (s: string) => (d.advice || []).some((a) => (a.source || 'workbuddy') === s);
       setSource((cur) => {
-        if (cur !== 'all' && has(cur)) return cur;
+        if (userPicked.current) return cur;
         return has('workbuddy') ? 'workbuddy' : 'all';
       });
       const codes = Array.from(
@@ -169,11 +176,12 @@ export function FundsPage() {
     (m, s) => (!m || (s.lastDate && s.lastDate > m) ? s.lastDate || m : m),
     null
   );
+  // 它今天没跑也能占住位置（日期显示「暂无」），不会悄悄消失
   const sourceTabs = (data.sources || []).length > 1
     ? [
         ...(data.sources || [])
           .slice()
-          .sort((a, b) => (a.source === 'workbuddy' ? -1 : b.source === 'workbuddy' ? 1 : 0))
+          .sort((a, b) => (DISPLAY_RANK[a.source] ?? 9) - (DISPLAY_RANK[b.source] ?? 9))
           .map((s) => ({ source: s.source, label: s.label, lastDate: s.lastDate })),
         { source: 'all', label: '合并', lastDate: latestDate },
       ]
@@ -532,8 +540,8 @@ export function FundsPage() {
                 role="tab"
                 aria-selected={source === t.source}
                 className={`fund-source-tab${source === t.source ? ' is-on' : ''}`}
-                onClick={() => setSource(t.source)}
-                title={t.lastDate ? `最新建议日期 ${t.lastDate}` : undefined}
+                onClick={() => { userPicked.current = true; setSource(t.source); }}
+                title={t.lastDate ? `最新建议日期 ${t.lastDate}` : '这个来源还没有投过建议'}
               >
                 {t.label}
                 {t.lastDate ? (
@@ -542,7 +550,9 @@ export function FundsPage() {
                   >
                     {t.lastDate.slice(5)}
                   </span>
-                ) : null}
+                ) : (
+                  <span className="fund-tab-date is-old">暂无</span>
+                )}
               </button>
             ))}
             {/* 有来源落后时点破：那个日期不是最新的，别拿它当当前判断 */}
@@ -628,6 +638,7 @@ export function FundsPage() {
           position={detail.position}
           canDetail={canDetail}
           canManage={canManage}
+          sourceLabels={sourceLabels}
           onClose={() => setDetail(null)}
         />
       )}

@@ -30,9 +30,12 @@ const ACTION_CLASS: Record<FundAction, string> = {
 
 // 入账优先级已经不再决定「采纳谁」——用户点哪条账本就认哪条，
 // 同一天只能有一条被执行（服务端唯一索引强制），这里不再需要它
-const SOURCE_LABEL: Record<string, string> = {
+// 兜底标签：实际以服务端下发的 sourceLabels 为准，
+// 这样新接入一个模型（服务端配令牌即可）不需要改前端
+const FALLBACK_SOURCE_LABEL: Record<string, string> = {
   workbuddy: 'WorkBuddy',
   trae: 'Trae Work',
+  glm: '智谱 GLM',
   manual: '手动补记',
 };
 
@@ -44,12 +47,14 @@ interface Props {
   position: FundPosition | undefined;
   canDetail: boolean;
   canManage: boolean;
+  sourceLabels?: Record<string, string>;
   onClose: () => void;
 }
 
 export function FundDetailModal({
-  code, name, holding, advice, position, canDetail, canManage, onClose,
+  code, name, holding, advice, position, canDetail, canManage, sourceLabels, onClose,
 }: Props) {
+  const labelOf = (s: string) => sourceLabels?.[s] || FALLBACK_SOURCE_LABEL[s] || s;
   const [series, setSeries] = useState<FundNavPoint[] | null>(null);
   const [history, setHistory] = useState<FundAdvice[] | null>(null);
   // 记录区必须能看到同一天所有工具的候选，才能选择采纳哪条——
@@ -132,7 +137,7 @@ export function FundDetailModal({
           {/* 只有候选才标来源，被采纳的那条不需要——我不关心是谁建议的 */}
           {!isAdopted && (
             <span className="fund-src-badge" data-source={String(h.source)}>
-              {SOURCE_LABEL[String(h.source)] || String(h.source)}
+              {labelOf(String(h.source))}
             </span>
           )}
           {/* 有金额的随时能采纳；「持有」这类只在当天有多个候选时才给按钮——
@@ -439,11 +444,11 @@ export function FundDetailModal({
 
       {advice?.updatedAt && (
         <div className="faint" style={{ fontSize: 11, marginTop: 12 }}>
-          {advice.tradeDate} · {SOURCE_LABEL[String(advice.source)] || advice.source} ·{' '}
+          {advice.tradeDate} · {labelOf(String(advice.source))} ·{' '}
           {formatRelative(advice.updatedAt)}更新
           {advice.model ? ` · ${advice.model}` : ''}
           {advice.settledSource && advice.settledSource !== 'deduped'
-            ? ` · 由 ${SOURCE_LABEL[advice.settledSource] || advice.settledSource} 结算`
+            ? ` · 由 ${labelOf(String(advice.settledSource))} 结算`
             : ''}
         </div>
       )}

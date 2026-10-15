@@ -22,7 +22,61 @@ function loadEnvFile(file) {
   }
 }
 
-loadEnvFile(path.join(__dirname, '..', '..', '.env'));
+// .env 可能放在 server/ 下（部署约定，systemd 也用 EnvironmentFile 读它），
+// 也可能放在仓库根（本地开发）。两个位置都试，已存在的环境变量优先。
+// 之前只认仓库根那一个，独立脚本（排查、体检）会读不到令牌，只有 systemd 拉起的服务正常
+for (const rel of ['..', path.join('..', '..')]) {
+  loadEnvFile(path.join(__dirname, rel, '.env'));
+}
+
+// 令牌 → 来源。两种写法都认，混用也行：
+//   1) FUND_INGEST_TOKENS="workbuddy:wbk_aaa,trae:wbk_bbb,glm:wbk_ccc"  ← 推荐
+//      再接入新工具只改这一行，不用动代码
+//   2) FUND_INGEST_TOKEN=xxx / FUND_INGEST_TOKEN_TRAE=yyy                ← 旧写法，兼容保留
+// 来源名就是映射里的 key（小写）。服务端只按「用哪个令牌」反查来源，
+// 任务 payload 里自报 source 一律忽略——否则模型串了就会把建议写进别人的格子
+function parseIngestTokens() {
+  const map = {};
+  const legacy = {
+    workbuddy: process.env.FUND_INGEST_TOKEN || '',
+    trae: process.env.FUND_INGEST_TOKEN_TRAE || '',
+  };
+  for (const [name, token] of Object.entries(legacy)) {
+    if (token) map[name] = token;
+  }
+  for (const part of String(process.env.FUND_INGEST_TOKENS || '').split(',')) {
+    const seg = part.trim();
+    if (!seg) continue;
+    const i = seg.indexOf(':');
+    if (i <= 0) continue;
+    const name = seg.slice(0, i).trim().toLowerCase();
+    const token = seg.slice(i + 1).trim();
+    if (name && token) map[name] = token;
+  }
+  return map;
+}
+
+// 来源展示名。内置常见来源，其他用 FUND_SOURCE_LABELS="glm:智谱 GLM" 补充/覆盖
+const DEFAULT_SOURCE_LABELS = {
+  workbuddy: 'WorkBuddy',
+  trae: 'Trae Work',
+  glm: '智谱 GLM',
+  manual: '手动补记',
+};
+
+function parseSourceLabels() {
+  const labels = { ...DEFAULT_SOURCE_LABELS };
+  for (const part of String(process.env.FUND_SOURCE_LABELS || '').split(',')) {
+    const seg = part.trim();
+    if (!seg) continue;
+    const i = seg.indexOf(':');
+    if (i <= 0) continue;
+    const name = seg.slice(0, i).trim().toLowerCase();
+    const label = seg.slice(i + 1).trim();
+    if (name && label) labels[name] = label;
+  }
+  return labels;
+}
 
 export const config = {
   port: Number(process.env.PORT || 3001),
@@ -64,24 +118,27 @@ export const config = {
   fundMinAddAmount: Number(process.env.FUND_MIN_ADD || 10),
   fileMaxMb: Number(process.env.FILE_MAX_MB || 20),
   fileQuotaMb: Number(process.env.FILE_QUOTA_MB || 2048),
-  // 未配置时 ingest 接口直接关闭（返回 503），避免开着无鉴权的写接口。
+  // 未配置任何令牌时 ingest 接口直接关闭（返回 503），避免开着无鉴权的写接口。
+  // 加新分析工具 = 往这张表里多配一个令牌，代码不用改
+  fundIngestTokens: parseIngestTokens(),
+  // 旧写法保留：rotate-fund-token.js 与历史脚本仍在用，值就是映射表里同名项
   fundIngestToken: process.env.FUND_INGEST_TOKEN || '',
-  // Trae Work 专用令牌：与主令牌分开，服务端据此自动判定建议来源，也便于单独吊销
   fundIngestTokenTrae: process.env.FUND_INGEST_TOKEN_TRAE || '',
+  // 页面上怎么称呼每个来源
+  fundSourceLabels: parseSourceLabels(),
   // 允许写账本（/settle）的来源，逗号分隔；留空 = 不限制。
   // 角色分离时设成 trae，WorkBuddy 本机任务就只出建议、动不了账本
   fundSettleSources: String(process.env.FUND_SETTLE_SOURCES || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
-  // 同一基金同一天多个来源都给了建议时的入账优先级（账本只有一本，只认排在最前的那个）。
-  // manual 是用户自己补记的真实操作，永远最可信
+  // 低金额门槛：额度剩余不足时直接判持有，而不是拆出一笔零头。
+  // 「入账优先级」在「采纳才入账」之后已无实际作用，只在老库兜底路径里用到——
+  // 采纳哪条完全由用户在页面点，不需要靠优先级裁决
   fundSettlePriority: String(process.env.FUND_SETTLE_PRIORITY || 'manual,trae,workbuddy')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
-  // 低于这个金额不值得下单：额度剩余不足时直接判持有，而不是拆出一笔零头
-  fundMinAddAmount: Number(process.env.FUND_MIN_ADD || 10),
   isProd: process.env.NODE_ENV !== 'development',
 };
 
