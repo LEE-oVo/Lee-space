@@ -35,6 +35,9 @@ function eventText(e: FundEquityEvent | undefined) {
 
 interface Props {
   data: FundEquity;
+  /** 这份数据是什么时候从服务器拉回来的，让用户确认自己看到的是最新的 */
+  updatedAt?: number | null;
+  onRefresh?: () => void;
 }
 
 /**
@@ -50,7 +53,7 @@ interface Props {
  * 尺寸用真实像素（ResizeObserver 量宽度）而不是 SVG 缩放，
  * 否则 viewBox 拉伸会把坐标文字压变形。
  */
-export function EquityChart({ data }: Props) {
+export function EquityChart({ data, updatedAt, onRefresh }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(760);
   const [mode, setMode] = useState<'pct' | 'amount'>('pct');
@@ -154,11 +157,23 @@ export function EquityChart({ data }: Props) {
           <div className="equity-title">总投入收益曲线</div>
           <div className="equity-sub faint">
             {summary ? `${summary.from} ~ ${summary.to} · ${summary.days} 个交易日` : '按日汇总全部基金'}
-            {' · '}
-            口径与上方投资总览一致
+            {' · 口径与上方投资总览一致'}
+            {updatedAt
+              ? ` · 更新于 ${new Date(updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
+              : ''}
           </div>
         </div>
         <div className="equity-tools">
+          {onRefresh && (
+            <button
+              type="button"
+              className="equity-toggle"
+              onClick={onRefresh}
+              title="重新从服务器拉取（结算跑完刷新一下就是新的）"
+            >
+              刷新
+            </button>
+          )}
           <button
             type="button"
             className={`equity-toggle${showTwr ? ' is-on' : ''}`}

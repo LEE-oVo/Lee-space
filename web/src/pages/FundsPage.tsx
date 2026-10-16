@@ -104,8 +104,12 @@ export function FundsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [series, setSeries] = useState<Record<string, FundNavPoint[]>>({});
-  // 组合收益曲线：含金额，只有能看金额的人才会去拉
+  // 组合收益曲线：含金额，只有能看金额的人才会去拉。
+  // 'loading' / 'ready' / 'error' 分开存，否则拉取失败会一直卡在「加载中」
   const [equity, setEquity] = useState<FundEquity | null>(null);
+  const [equityState, setEquityState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [equityAt, setEquityAt] = useState<number | null>(null);
+  const lastLoadAt = useRef(0);
   const [detail, setDetail] = useState<DetailTarget | null>(null);
   const [expandSummary, setExpandSummary] = useState(false);
   // 默认看主工具的判断；Trae 只在我想额外对照时才切过去。
@@ -116,6 +120,7 @@ export function FundsPage() {
   const userPicked = useRef(false);
 
   const load = useCallback(async () => {
+    lastLoadAt.current = Date.now();
     setRefreshing(true);
     try {
       const d = await api.funds();
@@ -139,10 +144,16 @@ export function FundsPage() {
         if (r && r.series.length > 1) map[c] = r.series;
       });
       setSeries(map);
-      // 收益曲线单独一个请求：它算的是全量历史，慢一点也不该拖住上面的卡片
+      // 收益曲线单独一个请求：它算的是全量历史，慢一点也不该拖住上面的卡片。
+      // 每次都是重新从库里算，结算跑完只要刷新就是新的
       if (canDetail) {
-        const eq = await api.fundEquity().catch(() => null);
-        if (eq) setEquity(eq);
+        try {
+          setEquity(await api.fundEquity());
+          setEquityAt(Date.now());
+          setEquityState('ready');
+        } catch {
+          setEquityState('error');
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
@@ -154,6 +165,18 @@ export function FundsPage() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // 切回这个标签页时自动刷新：定时任务常在后台跑完（13:00 结算、14:30 建议），
+  // 一直开着页面反而看不到新数据。节流 30 秒，避免来回切标签刷个不停
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastLoadAt.current < 30000) return;
+      void load();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   }, [load]);
 
   if (loading) {
@@ -543,9 +566,18 @@ export function FundsPage() {
         {/* 组合收益曲线：单独拉，免得它慢了把整个页面拖住 */}
         {canDetail && (
           <div className="card equity-card">
-            {equity
-              ? <EquityChart data={equity} />
-              : <div className="equity-empty">收益曲线加载中…</div>}
+            {equityState === 'ready' && equity ? (
+              <EquityChart data={equity} updatedAt={equityAt} onRefresh={() => void load()} />
+            ) : equityState === 'error' ? (
+              <div className="equity-empty">
+                收益曲线加载失败
+                <button type="button" className="btn ghost sm" style={{ marginLeft: 8 }} onClick={() => void load()}>
+                  重试
+                </button>
+              </div>
+            ) : (
+              <div className="equity-empty">收益曲线加载中…</div>
+            )}
           </div>
         )}
 
@@ -657,6 +689,7 @@ export function FundsPage() {
           canManage={canManage}
           sourceLabels={sourceLabels}
           onClose={() => setDetail(null)}
+          onChanged={() => void load()}
         />
       )}
     </div>

@@ -49,10 +49,12 @@ interface Props {
   canManage: boolean;
   sourceLabels?: Record<string, string>;
   onClose: () => void;
+  /** 弹窗里改了账本（采纳/取消/补记）后通知页面：曲线和卡片都得跟着变 */
+  onChanged?: () => void;
 }
 
 export function FundDetailModal({
-  code, name, holding, advice, position, canDetail, canManage, sourceLabels, onClose,
+  code, name, holding, advice, position, canDetail, canManage, sourceLabels, onClose, onChanged,
 }: Props) {
   const labelOf = (s: string) => sourceLabels?.[s] || FALLBACK_SOURCE_LABEL[s] || s;
   const [series, setSeries] = useState<FundNavPoint[] | null>(null);
@@ -212,6 +214,8 @@ export function FundDetailModal({
             )
           : prev
       );
+      // 采纳状态会改变收益曲线（已执行的才算真实操作），通知页面重新拉
+      onChanged?.();
     } catch {
       /* 标记失败不影响浏览 */
     }
@@ -458,7 +462,11 @@ export function FundDetailModal({
           code={code}
           name={name}
           onClose={() => setRecording(false)}
-          onSaved={() => setReloadKey((k) => k + 1)}
+          onSaved={() => {
+            setReloadKey((k) => k + 1);
+            // 补记的是真实操作，会直接改写收益曲线，页面必须重新拉
+            onChanged?.();
+          }}
         />
       )}
     </Modal>

@@ -29,6 +29,14 @@ app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 app.use(attachUser);
 
+// 接口一律不缓存：持仓、建议、收益曲线每次都可能是新的（结算刚跑完就变了）。
+// 不显式声明的话，中间代理或浏览器可能按启发式规则缓存住十几秒到几分钟。
+// 必须注册在所有 /wb-api 路由**之前**，否则先匹配上的路由直接就返回了
+app.use('/wb-api', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 // 注意：/api 前缀已整段让给 DeepSeek Harness（Nginx 反代到 127.0.0.1:3080），
 // 工作台自身接口统一使用 /wb-api，避免两者路径冲突。
 app.get('/wb-api/health', (_req, res) => res.json({ ok: true, service: 'lee-workbench', time: Date.now() }));
