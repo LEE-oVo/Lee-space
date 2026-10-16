@@ -4,10 +4,11 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { Icon } from '../components/Icon';
 import { NavChart } from '../components/NavChart';
+import { EquityChart } from '../components/EquityChart';
 import { FundDetailModal } from '../components/FundDetailModal';
 import { formatRelative } from '../lib/format';
 import type {
-  FundAdvice, FundAction, FundHolding, FundNavPoint, FundOverview, FundPosition,
+  FundAdvice, FundAction, FundEquity, FundHolding, FundNavPoint, FundOverview, FundPosition,
 } from '../types';
 
 const ACTION_LABEL: Record<FundAction, string> = {
@@ -103,6 +104,8 @@ export function FundsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [series, setSeries] = useState<Record<string, FundNavPoint[]>>({});
+  // 组合收益曲线：含金额，只有能看金额的人才会去拉
+  const [equity, setEquity] = useState<FundEquity | null>(null);
   const [detail, setDetail] = useState<DetailTarget | null>(null);
   const [expandSummary, setExpandSummary] = useState(false);
   // 默认看主工具的判断；Trae 只在我想额外对照时才切过去。
@@ -136,13 +139,18 @@ export function FundsPage() {
         if (r && r.series.length > 1) map[c] = r.series;
       });
       setSeries(map);
+      // 收益曲线单独一个请求：它算的是全量历史，慢一点也不该拖住上面的卡片
+      if (canDetail) {
+        const eq = await api.fundEquity().catch(() => null);
+        if (eq) setEquity(eq);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [canDetail]);
 
   useEffect(() => {
     void load();
@@ -529,6 +537,15 @@ export function FundsPage() {
                 <Icon name="chevRight" size={12} />
               </Link>
             )}
+          </div>
+        )}
+
+        {/* 组合收益曲线：单独拉，免得它慢了把整个页面拖住 */}
+        {canDetail && (
+          <div className="card equity-card">
+            {equity
+              ? <EquityChart data={equity} />
+              : <div className="equity-empty">收益曲线加载中…</div>}
           </div>
         )}
 

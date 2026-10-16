@@ -232,6 +232,63 @@ export interface FundInvestment {
   progressPct: number | null;
 }
 
+/** 组合收益曲线上的一天：口径与页面卡片上的投资总览完全一致 */
+export interface FundEquityPoint {
+  date: string;
+  /** 当日总市值 */
+  market: number;
+  /** 剩余份额对应的成本 */
+  cost: number;
+  /** 累计净投入（现金流口径，也是额度的依据） */
+  netInvested: number;
+  /** 累计已实现盈亏 */
+  realized: number;
+  /** 累计收益 = 市值 − 成本 + 已实现 */
+  profit: number;
+  /** 相对净投入的累计收益率（%） */
+  returnPct: number;
+  /** 时间加权收益率（%）：剔除加减仓现金流的影响 */
+  twrPct: number;
+  /** 当日盈亏（已剔除当日现金流） */
+  dailyProfit: number;
+}
+
+/** 曲线上的操作事件（建仓/加仓/减仓） */
+export interface FundEquityEvent {
+  date: string;
+  add: number;
+  reduce: number;
+  init: number;
+  codes: string[];
+}
+
+export interface FundEquitySummary {
+  from: string;
+  to: string;
+  days: number;
+  market: number;
+  netInvested: number;
+  profit: number;
+  returnPct: number;
+  twrPct: number;
+  peakPct: number;
+  troughPct: number;
+  maxDrawdownPct: number;
+  maxDrawdownAt: string | null;
+  upDays: number;
+  downDays: number;
+  bestDay: { date: string; profit: number } | null;
+  worstDay: { date: string; profit: number } | null;
+}
+
+export interface FundEquity {
+  points: FundEquityPoint[];
+  events: FundEquityEvent[];
+  summary: FundEquitySummary | null;
+  targetReturnPct: number;
+  totalBudget: number;
+}
+
 export interface FundOverview {
   daily: FundDaily | null;
   /** 每个来源各自最新一天的整体结论，页面切来源时跟着换 */

@@ -1619,6 +1619,116 @@ table.data tbody tr:hover {
   font-size: 12px;
   color: var(--c-text-dim);
 }
+/* ---------- 组合收益曲线 ---------- */
+.equity-card { padding: 14px 16px 16px; }
+.equity { display: flex; flex-direction: column; gap: 8px; }
+.equity-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.equity-title { font-size: 14px; font-weight: 600; }
+.equity-sub { font-size: 11.5px; margin-top: 2px; }
+.equity-tools { display: flex; gap: 6px; }
+.equity-toggle {
+  border: 1px solid var(--c-border);
+  background: transparent;
+  color: var(--c-text-dim);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all var(--dur) var(--ease);
+}
+.equity-toggle:hover { border-color: var(--c-border-strong); color: var(--c-text); }
+.equity-toggle.is-on {
+  border-color: color-mix(in srgb, var(--c-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+  color: var(--c-accent);
+}
+.equity-plot { position: relative; }
+.equity-plot svg { display: block; }
+
+.equity-tip {
+  position: absolute;
+  top: 6px;
+  min-width: 168px;
+  padding: 8px 10px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface);
+  box-shadow: 0 6px 18px var(--c-shadow);
+  font-size: 11.5px;
+  pointer-events: none;
+  z-index: 3;
+}
+.equity-tip-head {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 5px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--c-border);
+}
+.equity-tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  line-height: 1.75;
+}
+.equity-tip-row span { color: var(--c-text-dim); }
+.equity-tip-row b { font-weight: 600; }
+.equity-tip-note {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--c-border);
+  color: var(--c-accent);
+  font-size: 11px;
+}
+
+.equity-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 11px;
+  color: var(--c-text-dim);
+}
+.equity-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.equity-legend i.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.equity-legend i.dot.dash { width: 12px; height: 2px; border-radius: 1px; }
+
+.equity-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--c-border);
+}
+.equity-stat { display: flex; flex-direction: column; gap: 1px; }
+.equity-stat-label { font-size: 11px; color: var(--c-text-faint); }
+.equity-stat-value { font-size: 13px; font-weight: 600; }
+.equity-stat-sub { font-size: 10.5px; }
+
+.equity-empty {
+  padding: 22px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--c-text-faint);
+}
+
+@media (max-width: 640px) {
+  .equity-card { padding: 12px 12px 14px; }
+  .equity-stats { grid-template-columns: repeat(2, 1fr); }
+  .equity-tip { min-width: 148px; font-size: 11px; }
+}
+
 .fund-budget-line b.mono { font-size: 13px; }
 .fund-budget-link {
   display: inline-flex;

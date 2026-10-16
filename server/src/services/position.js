@@ -473,6 +473,199 @@ function syncCost(code) {
 }
 
 /**
+ * 组合层面的每日收益曲线（所有基金合起来看）。
+ *
+ * 口径刻意与 investmentSummary 完全对齐：最后一天的数字必须等于页面卡片上的数字，
+ * 否则曲线末端和卡片对不上，看着像算错了。
+ *   market      = Σ 当日份额 × 当日净值（当天缺净值就沿用上一交易日的）
+ *   cost        = Σ 批次金额 − Σ 已卖出份额对应的成本
+ *   realized    = Σ 已实现盈亏
+ *   netInvested = Σ 批次金额 − Σ 赎回到账（现金流口径，也是额度的依据）
+ *   profit      = market − cost + realized
+ *   returnPct   = profit / netInvested
+ *
+ * 另外算一条 TWR（时间加权收益率）：剔除加仓/减仓的现金流影响，只看
+ * 「钱放着不动能涨多少」。加仓越密，简单收益率被摊薄得越厉害——
+ * 例如一路加仓会让「累计收益率」显得很小，那不是亏了，只是分母变大了。
+ * 最大回撤按 TWR 算才有意义，否则一次加仓就能把回撤抹平。
+ */
+export function equityCurve() {
+  const db = getDb();
+  const lots = db
+    .prepare(`SELECT code, buy_date, amount, shares, source FROM fund_lots ORDER BY buy_date, id`)
+    .all();
+  const sells = db
+    .prepare(
+      `SELECT code, trade_date, action, amount, settled_amount, settled_shares, settled_realized
+         FROM fund_advice
+        WHERE settled = 1 AND action IN ('reduce','sell') AND settled_shares IS NOT NULL
+        ORDER BY trade_date, id`
+    )
+    .all();
+
+  // 净值一次性读成 code -> Map(date -> nav)：93 天 × 4 只也就几百行
+  const navMap = new Map();
+  const dateSet = new Set();
+  for (const r of db.prepare(`SELECT code, nav_date, nav FROM fund_nav ORDER BY nav_date`).all()) {
+    if (!navMap.has(r.code)) navMap.set(r.code, new Map());
+    navMap.get(r.code).set(r.nav_date, r.nav);
+    dateSet.add(r.nav_date);
+  }
+  const dates = [...dateSet].sort();
+  if (dates.length === 0) return { points: [], events: [], summary: null };
+
+  const shares = new Map();
+  const cost = new Map();
+  const lastNav = new Map();
+  let realized = 0;
+  let netInvested = 0;
+  let prevMarket = 0;
+  let twr = 1;
+  let lotI = 0;
+  let sellI = 0;
+  const points = [];
+
+  for (const date of dates) {
+    // 先把当天的净值取出来，后面算「买入带来的市值增量」要用
+    for (const code of navMap.keys()) {
+      const series = navMap.get(code);
+      if (series.has(date)) lastNav.set(code, series.get(date));
+    }
+
+    // 现金流要按**市值口径**折算，不能直接拿金额：
+    // 老持仓的初始批次金额是用户填的成本价，可能和净值序列起点的净值不一样
+    // （他是更早买的），差额是建仓前就存在的浮亏，不是这一天的行情变化。
+    // 用金额会把这笔算进「当日盈亏」，第一天就凭空亏一大截，还污染 TWR
+    let flowValue = 0;
+    while (lotI < lots.length && lots[lotI].buy_date <= date) {
+      const l = lots[lotI];
+      lotI += 1;
+      const nav = lastNav.get(l.code);
+      const sh = Number(l.shares || 0);
+      flowValue += nav != null ? sh * nav : Number(l.amount || 0);
+      shares.set(l.code, (shares.get(l.code) || 0) + sh);
+      cost.set(l.code, (cost.get(l.code) || 0) + Number(l.amount || 0));
+      netInvested += Number(l.amount || 0);
+    }
+    while (sellI < sells.length && sells[sellI].trade_date <= date) {
+      const s = sells[sellI];
+      sellI += 1;
+      const amt = Number(s.settled_amount) || 0;
+      const sh = Number(s.settled_shares) || 0;
+      const rz = Number(s.settled_realized) || 0;
+      const nav = lastNav.get(s.code);
+      flowValue -= nav != null ? sh * nav : amt;
+      shares.set(s.code, Math.max(0, (shares.get(s.code) || 0) - sh));
+      // 赎回带走的成本 = 到账金额 − 这笔的已实现盈亏
+      cost.set(s.code, Math.max(0, (cost.get(s.code) || 0) - (amt - rz)));
+      netInvested -= amt;
+      realized += rz;
+    }
+
+    let market = 0;
+    let costTotal = 0;
+    for (const code of shares.keys()) {
+      const navOfCode = navMap.get(code);
+      if (navOfCode && navOfCode.has(date)) lastNav.set(code, navOfCode.get(date));
+      const nav = lastNav.get(code);
+      if (nav != null) market += (shares.get(code) || 0) * nav;
+      costTotal += cost.get(code) || 0;
+    }
+
+    // 当日盈亏与 TWR 都把现金流剥掉，剩下的才是纯粹的行情涨跌
+    const base = prevMarket + flowValue;
+    const dayReturn = base > 0 ? (market - prevMarket - flowValue) / base : 0;
+    twr *= 1 + dayReturn;
+
+    const profit = market - costTotal + realized;
+    points.push({
+      date,
+      market: round2(market),
+      cost: round2(costTotal),
+      netInvested: round2(netInvested),
+      realized: round2(realized),
+      profit: round2(profit),
+      returnPct: netInvested > 0 ? round2((profit / netInvested) * 10000) / 100 : 0,
+      twrPct: round2((twr - 1) * 10000) / 100,
+      // 当日盈亏：市值变化剔除掉现金流，剩下的就是行情带来的。
+      // 建仓当天买入即持有，没有「前一天」可比，所以恒为 0
+      dailyProfit: round2(market - prevMarket - flowValue),
+    });
+    prevMarket = market;
+  }
+
+  /* ---- 事件：建仓 / 加仓 / 减仓，图上打标记用 ---- */
+  const eventMap = new Map();
+  const push = (date, key, amount, code) => {
+    if (!eventMap.has(date)) eventMap.set(date, { date, add: 0, reduce: 0, init: 0, codes: new Set() });
+    const e = eventMap.get(date);
+    e[key] = round2(e[key] + amount);
+    e.codes.add(code);
+  };
+  for (const l of lots) {
+    if (l.source === 'import') push(l.buy_date, 'init', Number(l.amount || 0), l.code);
+    else push(l.buy_date, 'add', Number(l.amount || 0), l.code);
+  }
+  for (const s of sells) push(s.trade_date, 'reduce', Number(s.settled_amount) || 0, s.code);
+  const events = [...eventMap.values()]
+    .map((e) => ({ ...e, codes: [...e.codes] }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return { points, events, summary: curveSummary(points) };
+}
+
+/** 曲线的区间统计：最值、回撤、最好/最差的一天 */
+function curveSummary(points) {
+  if (!points.length) return null;
+  const first = points[0];
+  const last = points[points.length - 1];
+  let peak = -Infinity;
+  let trough = Infinity;
+  let maxDrawdown = 0;
+  let drawdownAt = null;
+  let twrPeak = -Infinity;
+  let best = null;
+  let worst = null;
+  for (const p of points) {
+    if (p.returnPct > peak) peak = p.returnPct;
+    if (p.returnPct < trough) trough = p.returnPct;
+    // 回撤按 TWR 算：简单收益率会被加仓摊薄，用它算回撤会得到假的「没跌过」
+    if (p.twrPct > twrPeak) twrPeak = p.twrPct;
+    if (twrPeak > 0) {
+      // twrPeak / p.twrPct 都是百分点。除以峰值的倍数（1 + peak/100）换成百分点回撤，
+      // 分子本身已经是百分数，不要再乘 100
+      const dd = (twrPeak - p.twrPct) / (1 + twrPeak / 100);
+      if (dd > maxDrawdown) {
+        maxDrawdown = dd;
+        drawdownAt = p.date;
+      }
+    }
+    if (!best || p.dailyProfit > best.dailyProfit) best = p;
+    if (!worst || p.dailyProfit < worst.dailyProfit) worst = p;
+  }
+  // 盈利天数占比：看这段时间是单边涨还是震荡
+  const upDays = points.filter((p) => p.dailyProfit > 0).length;
+  return {
+    from: first.date,
+    to: last.date,
+    days: points.length,
+    market: last.market,
+    netInvested: last.netInvested,
+    profit: last.profit,
+    returnPct: last.returnPct,
+    twrPct: last.twrPct,
+    peakPct: round2(peak),
+    troughPct: round2(trough),
+    maxDrawdownPct: round2(maxDrawdown),
+    maxDrawdownAt: drawdownAt,
+    upDays,
+    downDays: points.filter((p) => p.dailyProfit < 0).length,
+    bestDay: best ? { date: best.date, profit: best.dailyProfit } : null,
+    worstDay: worst ? { date: worst.date, profit: worst.dailyProfit } : null,
+  };
+}
+
+/**
  * 投资总览：额度模型的依据是「净投入」而不是当前市值。
  *
  * 净投入 = 累计买入金额 − 累计赎回金额 + 已承诺但还没入账的加仓。

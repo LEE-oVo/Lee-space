@@ -1,5 +1,5 @@
 import type {
-  AuditLog, DshStatus, FileItem, FileQuota, FundAdvice, FundConfig, FundHolding, FundInvestment,
+  AuditLog, DshStatus, FileItem, FileQuota, FundAdvice, FundConfig, FundEquity, FundHolding, FundInvestment,
   FundNavPoint, FundOverview, PermissionRecord, RoleRecord, SystemStats, User, WeatherData, WorkbenchUser,
 } from './types';
 
@@ -63,6 +63,8 @@ export const api = {
     request<{ code: string; series: FundNavPoint[] }>(
       `/funds/series?code=${encodeURIComponent(code)}&limit=${limit}`
     ),
+  // 组合层面的每日收益曲线（含金额，需要 fund:detail）
+  fundEquity: () => request<FundEquity>('/funds/equity'),
   createFundRecord: (payload: Record<string, unknown>) =>
     request<{ ok: boolean; id: number | null; allocation: { used: number; budget: number; remain: number } }>(
       '/funds/records',

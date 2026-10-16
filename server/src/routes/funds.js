@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requirePermission, denyGuest, requireFundIngest, requireFundSettle, clientIp, hasPermission } from '../middleware/auth.js';
 import { writeAudit } from '../db/repo.js';
 import { config } from '../config.js';
-import { holdingView, pendingSettlements, settleDay, updateFees, investmentSummary, settlementAudit } from '../services/position.js';
+import { holdingView, pendingSettlements, settleDay, updateFees, investmentSummary, settlementAudit, equityCurve } from '../services/position.js';
 import { getFundConfig, updateFundConfig } from '../services/fundConfig.js';
 import {
   FUND_ACTIONS,
@@ -93,6 +93,20 @@ router.get('/', requirePermission('fund:view'), (req, res) => {
     sourceLabels: SOURCE_LABELS,
     settleSources: config.fundSettleSources,
     scope: detail ? 'full' : 'public',
+  });
+});
+
+// 组合收益曲线：每只基金每天的净值 × 当天的份额，汇总出一条总资产/收益曲线。
+// 全是金额数据，必须登录且有 fund:detail——游客连端点都进不来，不做裁剪版
+router.get('/equity', requirePermission('fund:detail'), denyGuest, (_req, res) => {
+  const cfg = getFundConfig();
+  const curve = equityCurve();
+  res.json({
+    points: curve.points,
+    events: curve.events,
+    summary: curve.summary,
+    targetReturnPct: Number(cfg.targetReturnPct) || 0,
+    totalBudget: Number(cfg.totalBudget) || 0,
   });
 });
 
