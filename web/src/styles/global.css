@@ -1872,6 +1872,99 @@ table.data tbody tr:hover {
   .eval-decision-body { grid-template-columns: 1fr; }
   .eval-table { font-size: 11px; }
   .eval-table th, .eval-table td { padding: 5px 5px; }
+  .eval-page-head { flex-direction: column; align-items: stretch; }
+}
+
+/* ---------- 事后评估：独立页面 ---------- */
+.eval-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px 14px;
+  margin-bottom: 14px;
+}
+.eval-page-title { font-size: 17px; font-weight: 600; }
+
+/* 基金页上的入口卡：一行话 + 一个按钮，不喧宾夺主 */
+.eval-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  padding: 12px 16px;
+}
+.eval-entry-text { min-width: 0; flex: 1; }
+.eval-entry-title { font-size: 13px; font-weight: 500; }
+
+/* ---------- 事后评估：字段释义 ---------- */
+.gloss-card { margin-top: 14px; }
+.gloss-group {
+  margin-top: 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+}
+.gloss-group[open] { padding-bottom: 10px; }
+.gloss-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12.5px;
+}
+.gloss-summary::-webkit-details-marker { display: none; }
+.gloss-summary::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  margin-right: 8px;
+  border-right: 1.5px solid var(--c-text-faint);
+  border-bottom: 1.5px solid var(--c-text-faint);
+  transform: rotate(-45deg);
+  transition: transform var(--dur) var(--ease);
+  flex: none;
+}
+.gloss-group[open] > .gloss-summary::before { transform: rotate(45deg); }
+.gloss-title { font-weight: 500; flex: 1; }
+.gloss-note {
+  margin: 0 0 4px;
+  padding-left: 13px;
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: var(--c-text-dim);
+}
+.gloss-list { margin: 0; padding-left: 13px; }
+.gloss-item {
+  padding: 7px 0;
+  border-top: 1px dashed var(--c-border);
+}
+.gloss-item dt {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c-accent);
+}
+.gloss-item dd {
+  margin: 3px 0 0;
+  font-size: 11.5px;
+  line-height: 1.85;
+  color: var(--c-text-dim);
+}
+.gloss-eg {
+  display: block;
+  margin-top: 4px;
+  padding-left: 9px;
+  border-left: 2px solid var(--c-border-strong);
+  font-size: 11px;
+  color: var(--c-text-faint);
+}
+
+@media (max-width: 640px) {
+  .gloss-card { padding: 12px 12px 14px; }
 }
 
 /* ---------- 组合收益曲线 ---------- */

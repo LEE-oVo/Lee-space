@@ -11,6 +11,7 @@ import { DshPage } from './pages/DshPage';
 import { SystemPage } from './pages/SystemPage';
 import { FundsPage } from './pages/FundsPage';
 import { FundSettingsPage } from './pages/FundSettingsPage';
+import { EvaluationPage } from './pages/EvaluationPage';
 import { FilesPage } from './pages/FilesPage';
 import { UsersPage } from './pages/UsersPage';
 import { AuditPage } from './pages/AuditPage';
@@ -22,6 +23,7 @@ const TITLES: Record<string, string> = {
   '/system': '系统状态',
   '/funds': '基金行情',
   '/funds/settings': '基金持仓配置',
+  '/funds/evaluation': '事后评估',
   '/files': '文件库',
   '/users': '用户与角色',
   '/audit': '审计日志',
@@ -84,6 +86,7 @@ export function App() {
             <Route path="/system" element={<SystemPage />} />
             <Route path="/funds" element={<FundsPage />} />
             <Route path="/funds/settings" element={<FundSettingsPage />} />
+            <Route path="/funds/evaluation" element={<EvaluationPage />} />
             <Route path="/files" element={<FilesPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/audit" element={<AuditPage />} />
