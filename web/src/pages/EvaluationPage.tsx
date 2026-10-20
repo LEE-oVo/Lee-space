@@ -1,5 +1,10 @@
 /**
- * 事后评估页（独立页面）。
+ * 决策复盘页（原「事后评估」）。
+ *
+ * 为什么叫复盘不叫评估：页面上跑的不是一个分数，而是三条互不相干的复盘线——
+ * 模型自己跟行情对答案、假设全听某一家会怎样、你每天那一票挑得值多少。
+ * 「评估」听着像在给模型打总分，容易把它当成排行榜用；
+ * 「复盘」才对得上这里实际在做的事。
  *
  * 从基金页里分出来的原因不只是「内容多」：它和基金页要回答的问题完全相反——
  * 基金页是「今天该怎么做」，这里是「过去那些建议到底准不准」。
@@ -16,6 +21,7 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { Icon } from '../components/Icon';
 import { FundEvaluationPanel } from '../components/FundEvaluationPanel';
+import { FundEvaluationOverview } from '../components/FundEvaluationOverview';
 import { FundEvaluationGlossary } from '../components/FundEvaluationGlossary';
 import type { FundEvaluation } from '../types';
 
@@ -64,7 +70,7 @@ export function EvaluationPage() {
         <div className="card">
           <div className="row" style={{ gap: 8, marginBottom: 6 }}>
             <Icon name="shield" size={16} />
-            <div style={{ fontWeight: 500 }}>没有事后评估的访问权限</div>
+            <div style={{ fontWeight: 500 }}>没有决策复盘的访问权限</div>
           </div>
           <p className="muted" style={{ fontSize: 13, margin: '0 0 12px' }}>
             这里要对照三条组合曲线与你的采纳取舍，包含持仓金额和跨来源横向排名，
@@ -92,7 +98,7 @@ export function EvaluationPage() {
     <div className="page">
       <div className="eval-page-head">
         <div>
-          <div className="eval-page-title">事后评估</div>
+          <div className="eval-page-title">决策复盘</div>
           <div className="faint">
             每条建议都按自己的未来净值单独打分，采纳与否不进公式
           </div>
@@ -113,6 +119,7 @@ export function EvaluationPage() {
 
       {data ? (
         <>
+          <FundEvaluationOverview data={data} />
           <FundEvaluationPanel data={data} />
           <FundEvaluationGlossary data={data} />
         </>

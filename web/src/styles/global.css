@@ -1898,6 +1898,115 @@ table.data tbody tr:hover {
 .eval-entry-text { min-width: 0; flex: 1; }
 .eval-entry-title { font-size: 13px; font-weight: 500; }
 
+/* ---------- 决策复盘：总览 ---------- */
+.evov-card { margin-bottom: 14px; }
+.evov-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.evov-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface-hover);
+}
+.evov-metric span { font-size: 11px; color: var(--c-text-faint); }
+.evov-metric b { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.evov-metric em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--c-text-faint);
+  line-height: 1.5;
+}
+.evov-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px 22px;
+  margin-top: 14px;
+}
+.evov-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.evov-sub span { font-size: 11px; font-weight: 400; }
+.evov-row {
+  display: grid;
+  grid-template-columns: 96px 1fr 78px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px dashed var(--c-border);
+}
+.evov-row.is-mine { background: color-mix(in srgb, var(--c-accent) 8%, transparent); }
+.evov-row.is-baseline .evov-name,
+.evov-row.is-baseline .evov-val b { color: var(--c-text-dim); }
+.evov-row.is-baseline .evov-bar { opacity: 0.45; }
+.evov-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c-text);
+  line-height: 1.4;
+  word-break: break-all;
+}
+.evov-barcol { min-width: 0; }
+.evov-track {
+  position: relative;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--c-surface-hover);
+  overflow: hidden;
+}
+.evov-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  border-radius: 3px;
+  background: currentColor;
+}
+.evov-bar.up { color: var(--c-danger); }
+.evov-bar.down { color: var(--c-success); }
+.evov-zero {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: var(--c-border-strong);
+}
+.evov-note {
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--c-text-faint);
+  line-height: 1.5;
+}
+.evov-val {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: right;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.evov-val em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--c-text-faint);
+}
+
+@media (max-width: 640px) {
+  .evov-row { grid-template-columns: 84px 1fr 68px; gap: 8px; }
+  .evov-grid { gap: 12px; }
+}
+
 /* ---------- 事后评估：字段释义 ---------- */
 .gloss-card { margin-top: 14px; }
 .gloss-group {

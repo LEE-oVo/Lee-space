@@ -23,7 +23,7 @@ const TITLES: Record<string, string> = {
   '/system': '系统状态',
   '/funds': '基金行情',
   '/funds/settings': '基金持仓配置',
-  '/funds/evaluation': '事后评估',
+  '/funds/evaluation': '决策复盘',
   '/files': '文件库',
   '/users': '用户与角色',
   '/audit': '审计日志',

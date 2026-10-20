@@ -289,7 +289,7 @@ export interface FundEquity {
   totalBudget: number;
 }
 
-/* ---------- 事后评估 ---------- */
+/* ---------- 决策复盘（事后评估） ---------- */
 
 /** 某组建议在某个前瞻窗口上的统计（三大口径各一套） */
 export interface EvalStat {

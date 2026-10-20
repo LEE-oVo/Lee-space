@@ -158,7 +158,7 @@ export function FundsPage() {
       setSeries(map);
       // 收益曲线单独一个请求：它算的是全量历史，慢一点也不该拖住上面的卡片。
       // 每次都是重新从库里算，结算跑完只要刷新就是新的。
-      // 事后评估已经挪到独立页面 /funds/evaluation，这里不再跟着它一起重算
+      // 决策复盘已经挪到独立页面 /funds/evaluation，这里不再跟着它一起重算
       if (canDetail) {
         try {
           setEquity(await api.fundEquity());
@@ -655,12 +655,12 @@ export function FundsPage() {
           </div>
         )}
 
-        {/* 事后评估不再塞在这页里——它回答的是「过去准不准」，和「今天怎么做」是两种心态，
+        {/* 决策复盘不再塞在这页里——它回答的是「过去准不准」，和「今天怎么做」是两种心态，
             而且全量重算不该跟着基金页一起触发。这里只留一个入口 */}
         {canDetail && (
           <div className="card eval-entry">
             <div className="eval-entry-text">
-              <div className="eval-entry-title">事后评估</div>
+              <div className="eval-entry-title">决策复盘</div>
               <div className="faint">
                 每条建议按自己的未来净值单独打分，看看哪家的判断更准、你挑的那条值多少
               </div>

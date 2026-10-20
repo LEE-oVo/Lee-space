@@ -1,5 +1,5 @@
 /**
- * 事后评估面板：把「模型判断得准不准」和「我挑得准不准」分成三层摆出来。
+ * 决策复盘面板：把「模型判断得准不准」和「我挑得准不准」分成三层摆出来。
  *
  * 三层为什么不能合成一个分数——它们的因果链完全不同：
  *   ① 模型成绩单：模型 vs 行情。纯预测能力，模型自己能改的部分。
@@ -236,7 +236,7 @@ export function FundEvaluationPanel({ data }: { data: FundEvaluation }) {
     <div className="card eval-card">
       <div className="eval-head">
         <div>
-          <div className="eval-title">事后评估</div>
+          <div className="eval-title">决策复盘</div>
           <div className="faint">
             {card.span ? `${card.span.from} → ${card.span.to}，共 ${card.rowCount} 条建议` : '还没有建议数据'}
             {' · 主视窗 '}
