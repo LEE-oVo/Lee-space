@@ -235,7 +235,7 @@ export function FundEvaluationOverview({ data }: { data: FundEvaluation }) {
           <div className="evov-sub">
             谁说得更准
             <span className="faint">
-              条＝机会成本口径胜率（持有记 0 分，全量可比）
+              条形长度＝机会成本口径胜率（持有记 0 分，全量可比）
             </span>
           </div>
           {winRows.length === 0 ? (
@@ -269,7 +269,7 @@ export function FundEvaluationOverview({ data }: { data: FundEvaluation }) {
           <div className="evov-sub">
             照谁做挣了多少
             <span className="faint">
-              条＝时间加权收益率 TWR%，右侧为本金与盈亏
+              条形长度＝时间加权收益率 TWR%，右侧为本金与盈亏
             </span>
           </div>
           {invRows.length === 0 ? (
