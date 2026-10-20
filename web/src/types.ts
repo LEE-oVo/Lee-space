@@ -306,8 +306,35 @@ export interface FundOverview {
   sourceLabels: Record<string, string>;
   /** 允许写账本的来源；非空时其他来源只能出建议 */
   settleSources: string[];
+  /** 服务端统一抓的盘中估值快照，code -> quote */
+  quotes: Record<string, FundQuote>;
   /** public = 未授权 fund:detail，持仓金额与详细分析已被服务端裁掉 */
   scope: 'full' | 'public';
+}
+
+/** 盘中估值快照：由服务端定时程序写入，页面与模型都只读 */
+export interface FundQuote {
+  /** 折算基准：最近一期真实净值 */
+  nav: number | null;
+  navDate: string | null;
+  /** 折算出的盘中估算净值 */
+  estimate: number | null;
+  /** 估算涨跌幅（百分点） */
+  estimatePct: number | null;
+  /** official = 官方估值；proxy = 代理标的折算 */
+  method: string | null;
+  /** 代理标的说明，如「腾讯·细分化工指数」 */
+  proxy: string | null;
+  proxyPrice: number | null;
+  proxyPct: number | null;
+  /** 净值对代理标的的回归系数，补偿联接基金的现金仓位 */
+  beta: number | null;
+  /** 抓取当时是否在盘中 */
+  trading: boolean;
+  /** 行情时间戳（秒） */
+  asOf: number;
+  /** 在刷新窗口内才算「实时」；过期数据模型应退回用净值判断 */
+  fresh: boolean;
 }
 
 export type FileCategory = 'resume' | 'certificate' | 'award' | 'other';

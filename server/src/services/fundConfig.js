@@ -12,6 +12,8 @@ const KEYS = {
   targetReturnPct: 'fund.targetReturnPct',
   dailyAddBudget: 'fund.dailyAddBudget',
   minAddAmount: 'fund.minAddAmount',
+  // 单只基金占总投资额的上限：防止模型一路加仓把额度堆到同一只上
+  maxWeightPct: 'fund.maxWeightPct',
 };
 
 const FALLBACK = {
@@ -19,6 +21,7 @@ const FALLBACK = {
   targetReturnPct: () => config.fundTargetReturnPct,
   dailyAddBudget: () => config.fundDailyAddBudget,
   minAddAmount: () => config.fundMinAddAmount,
+  maxWeightPct: () => config.fundMaxWeightPct,
 };
 
 function num(value, fallback) {
@@ -31,6 +34,7 @@ const RANGE = {
   targetReturnPct: [-90, 1000],
   dailyAddBudget: [0, 100000000],
   minAddAmount: [0, 100000],
+  maxWeightPct: [0, 100],
 };
 
 export function getFundConfig() {

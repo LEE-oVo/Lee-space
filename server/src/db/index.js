@@ -170,6 +170,8 @@ function ensureFundHoldingColumns(database) {
   addColumn(database, 'fund_holdings', 'fee_source', 'fee_source TEXT');
   addColumn(database, 'fund_holdings', 'fee_updated_at', 'fee_updated_at INTEGER');
   addColumn(database, 'fund_holdings', 'first_buy_date', 'first_buy_date TEXT');
+  addColumn(database, 'fund_holdings', 'quote_sources', 'quote_sources TEXT');
+  addColumn(database, 'fund_holdings', 'quote_beta', 'quote_beta REAL');
 }
 
 const PERMISSIONS = [

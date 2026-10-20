@@ -1,8 +1,10 @@
 import { getDb } from '../db/index.js';
 import { config } from '../config.js';
-import { parseFeeRules, investmentSummary } from './position.js';
+import { parseFeeRules, investmentSummary, holdingAgeInfo } from './position.js';
 import { getFundConfig } from './fundConfig.js';
 import { FUND_SOURCES, SOURCE_LABELS, normalizeSource, sourceRank } from './fundSource.js';
+import { readQuotes, quoteForAutomation } from './quote.js';
+import { computeTechnicals, describeTechnicals } from './technicals.js';
 
 // 本模块只负责存取与校验：行情抓取和买卖判断由定时任务里的大模型完成，
 // 工作台从不自行推断任何投资结论。
@@ -251,21 +253,10 @@ export function publicAdvice(a) {
  * 所以占用按「每只基金当天取最大金额」累加，而不是把所有来源的金额直接相加——
  * 否则两只工具各建议 500，占用会算成 1000，第二只工具就被凭空卡死。
  */
-export function todayAllocation(tradeDate, cfg) {
+export function todayAllocation(tradeDate, cfg, source = null) {
   const db = getDb();
-  const used = effectiveUsed(db, tradeDate);
+  const used = effectiveUsed(db, tradeDate, null, source);
   const budget = Number((cfg ?? getFundConfig())?.dailyAddBudget) || 0;
-  const bySource = {};
-  for (const r of db
-    .prepare(
-      `SELECT IFNULL(source,'workbuddy') AS source, COALESCE(SUM(amount), 0) AS used
-         FROM fund_advice
-        WHERE trade_date = ? AND action IN ('buy', 'add') AND amount IS NOT NULL
-        GROUP BY source`
-    )
-    .all(tradeDate)) {
-    bySource[r.source] = r.used || 0;
-  }
   return {
     date: tradeDate,
     used,
@@ -273,21 +264,23 @@ export function todayAllocation(tradeDate, cfg) {
     // 0 = 不限；这时 remain 给 null，避免前端拿 Infinity 去算
     remain: budget > 0 ? Math.max(0, budget - used) : null,
     unlimited: budget <= 0,
-    // 各来源自己报的金额合计，仅用于展示「谁说了什么」，不代表真实占用
-    bySource,
+    // 这里刻意不返回 bySource。以前它按来源列出各家报了多少，本意是给页面展示，
+    // 但 /holdings 也带着它下发，等于把「另一个模型今天建议加 500」直接喂给模型——
+    // 那这份建议就不再独立了。跨来源的额度控制由我（人）自己把关，
+    // 不该在建议层就互相看彼此的数字。
     scope: 'daily-total',
   };
 }
 
-/** 按「每只基金当天取最大金额」累加的已占用额度，excludeCodes 里的基金不计入 */
-function effectiveUsed(db, tradeDate, excludeCodes) {
-  const rows = db
-    .prepare(
-      `SELECT code, MAX(amount) AS mx FROM fund_advice
-        WHERE trade_date = ? AND action IN ('buy','add') AND amount IS NOT NULL
-        GROUP BY code`
-    )
-    .all(tradeDate);
+/** 按「每只基金当天取最大金额」累加的已占用额度，excludeCodes 里的基金不计入。
+ *  传了 source 就只看该来源的明细（给模型看时必须这么过滤，别让它看到别人的报价）*/
+function effectiveUsed(db, tradeDate, excludeCodes, source = null) {
+  const rows = db.prepare(
+    `SELECT code, MAX(amount) AS mx FROM fund_advice
+      WHERE trade_date = ? AND action IN ('buy','add') AND amount IS NOT NULL
+        ${source ? `AND IFNULL(source,'workbuddy') = ?` : ''}
+      GROUP BY code`
+  ).all(...(source ? [tradeDate, source] : [tradeDate]));
   let used = 0;
   for (const r of rows) {
     if (excludeCodes && excludeCodes.has(r.code)) continue;
@@ -296,25 +289,77 @@ function effectiveUsed(db, tradeDate, excludeCodes) {
   return Math.round(used * 100) / 100;
 }
 
-/** 给定时任务的持仓清单：附带每只基金最近的加减仓记录，供模型回看决策 */
-export function holdingsForAutomation(limit = 12) {
+/**
+ * 给定时任务的持仓清单。
+ *
+ * 以前只给 cost/shares/amount + 最近操作，模型要自己出去拉净值、自己目测位置、
+ * 自己猜减仓要不要吃赎回费。这些全是「服务端本来就知道」的东西——
+ * 让三个模型各拉各的、各算各的，既浪费时间又会让同一天出现三种互相矛盾的口径。
+ * 所以这里一次给全：净值序列、技术指标、集中度、减仓成本、自己过去的判断。
+ *
+ * opts.source：只回看「本来源」自己的历史建议，其它来源的一条都不给——
+ * 模型中立是这个模块的底线，让 A 看见 B 的判断，这份建议就不再独立了。
+ */
+export function holdingsForAutomation(limit = 12, opts = {}) {
   const holdings = listHoldings();
   const db = getDb();
-  const stmt = db.prepare(
-    `SELECT * FROM fund_advice WHERE code = ? ORDER BY trade_date DESC LIMIT ?`
+  const today = opts.today || new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+  const totalBudget = Number(getFundConfig()?.totalBudget) || 0;
+  const netInvested = Number(opts.invest?.netInvested) || 0;
+  const source = opts.source || null;
+
+  const myStmt = db.prepare(
+    `SELECT trade_date, action, amount, confidence FROM fund_advice
+      WHERE code = ? AND IFNULL(source,'workbuddy') = ?
+      ORDER BY trade_date DESC LIMIT 5`
   );
-  return holdings.map((h) => ({
-    ...h,
-    // 只下发我真实做过的操作（天然一天一条）。**不带 source**：
-    // 模型只需要知道「哪天对哪只基金做了什么、多少钱」，
-    // 至于是哪个工具建议的与它的判断无关，给了反而会让它去纠结来源
-    recent: effectiveHistory(h.code, Math.min(Math.max(Number(limit) || 12, 1), 60)).map((r) => ({
-      date: r.tradeDate,
-      action: r.action,
-      amount: r.amount,
-      nav: r.settledNav ?? r.nav ?? null,
-    })),
-  }));
+
+  return holdings.map((h) => {
+    const series = navSeries(h.code, 60);
+    const quote = quoteForAutomation(h.code, opts.quotes);
+    const tech = computeTechnicals(series, quote?.fresh ? quote.estimate : null);
+    const invested = Number(h.amount) || 0;
+    return {
+      ...h,
+      // 净值序列：服务端累积的真实净值，模型不要再自己去拉行情接口。
+      // 省下每只一个网络往返，也保证三个来源看到的是同一份数
+      navSeries: series,
+      // 技术指标：服务端统一口径算好，避免三个模型三种算法
+      technicals: tech,
+      technicalsText: describeTechnicals(tech),
+      // 集中度：模型得知道「再加 500 有色就占 30% 了」
+      weightPct: totalBudget > 0 ? round1(invested / totalBudget * 100) : null,
+      sharePct: netInvested > 0 ? round1(invested / netInvested * 100) : null,
+      // 减仓成本：最早批次还要多久降档、现在卖扣多少
+      holding: holdingAgeInfo(h.code, today),
+      // 只下发我真实做过的操作（天然一天一条）。**不带 source**：
+      // 模型只需要知道「哪天对哪只基金做了什么、多少钱」，
+      // 至于是哪个工具建议的与它的判断无关，给了反而会让它去纠结来源。
+      // 再去掉 hold：它不产生任何仓位变化，留着只会把有限的条数挤掉
+      recent: effectiveHistory(h.code, Math.min(Math.max(Number(limit) || 12, 1), 60))
+        .filter((r) => r.action !== 'hold')
+        .map((r) => ({
+          date: r.tradeDate,
+          action: r.action,
+          amount: r.amount,
+          nav: r.settledNav ?? r.nav ?? null,
+        })),
+      // 本来源自己的历史建议（最近 5 天）：让模型知道自己昨天说了什么，
+      // 避免「今天加、明天减、后天又加」的反复横跳。只给自己的，不给别人的
+      myRecent: source
+        ? myStmt.all(h.code, source).map((r) => ({
+            date: r.trade_date,
+            action: r.action,
+            amount: r.amount,
+            confidence: r.confidence || null,
+          }))
+        : [],
+    };
+  });
+}
+
+function round1(v) {
+  return Math.round(Number(v) * 10) / 10;
 }
 
 /**
@@ -776,9 +821,11 @@ export function ingestAdvice(payload, options = {}) {
   const db = getDb();
   // 额度必须在入库前算：库里已有的投入 + 本批次新承诺的，加起来不能超总投资额
   const cfg = getFundConfig();
-  // 传 tradeDate：当天已排但未执行的加仓也要算进占用，
-  // 否则两个工具同一天各排一笔就能把总额排穿
-  const invest = investmentSummary(cfg, tradeDate);
+  // 传 tradeDate：当天已排但未执行的加仓也要算进占用。
+  // 传 source：只按本来源自己的计划算。不然 A 的提议会被 B 的金额悄悄削掉一截——
+  // 响应里的 budget.adjusted 会把「别人的判断」间接泄露出去，模型下次就会试探。
+  // 跨来源超额不在这里自动兜，由我（人）采纳时自己看总额决定。
+  const invest = investmentSummary(cfg, tradeDate, { source });
 
   // 一天内重复跑任务：唯一键 (code, trade_date, source) 决定它是**覆盖**而不是新增，
   // 所以不会攒出多条记录、也不会重复占用额度。
@@ -809,6 +856,29 @@ export function ingestAdvice(payload, options = {}) {
 
   // 额度只对真正要写入的条目计算：被保护的那些金额没变，占用也就不变
   const { adjusted } = applyBudget(writable, tradeDate, source, cfg, invest);
+
+  // 估值由服务端统一口径覆盖写入。
+  // 大盘只有一个真相——三个模型各自去拉行情，受出口网络影响常常拿到三个不同的数，
+  // 页面上的横向比较就失去意义了。这里统一抹平，模型负责判断，数由服务端负责。
+  const quotes = readQuotes();
+  const quoteFilled = [];
+  for (const row of writable) {
+    const snap = quotes[row.code];
+    if (!snap || !snap.fresh) continue;
+    if (snap.estimate === null) continue;
+    row.estimate = snap.estimate;
+    row.estimatePct = snap.estimatePct;
+    // 快照里的净值来自 fund_nav（结算写入的真实净值），比建议里带的更可靠
+    if (snap.nav !== null && snap.navDate) {
+      row.nav = snap.nav;
+      row.navDate = snap.navDate;
+    }
+    if (row.stale) {
+      row.stale = 0;
+      row.reason = `${row.reason || ''}（估值已由服务端覆盖）`.trim();
+    }
+    quoteFilled.push(row.code);
+  }
 
   const upsert = db.prepare(
     `INSERT INTO fund_advice

@@ -249,3 +249,22 @@ CREATE TABLE IF NOT EXISTS fund_daily (
   updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
   PRIMARY KEY (trade_date, source)
 );
+
+-- 盘中估值快照：由服务端定时程序统一拉取，每只基金一行。
+-- 为什么不交给模型自己拉：行情接口的可用性高度依赖出口网络（本机常被挡、服务器通），
+-- 各家拿到的数不一样、还常常是拼凑出来的。统一在服务端拉，模型只读结果。
+CREATE TABLE IF NOT EXISTS fund_quote (
+  code          TEXT    PRIMARY KEY,
+  nav           REAL,             -- 折算基准：最近一期净值
+  nav_date      TEXT,
+  estimate      REAL,             -- 折算出的盘中估算净值
+  estimate_pct  REAL,             -- 估算涨跌幅（百分点）
+  method        TEXT,             -- official（官方估值）/ proxy（代理标的折算）
+  proxy         TEXT,             -- 代理标的说明，如「腾讯·细分有色指数」
+  proxy_price   REAL,
+  proxy_pct     REAL,
+  beta          REAL,             -- 净值对代理标的的回归系数，补偿联接基金的现金仓位
+  trading       INTEGER NOT NULL DEFAULT 0, -- 抓取当时是否处于盘中
+  as_of         INTEGER,          -- 行情时间戳
+  updated_at    INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+);

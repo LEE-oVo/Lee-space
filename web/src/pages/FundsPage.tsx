@@ -84,6 +84,14 @@ function navChangeOf(points?: FundNavPoint[]) {
   return ((last - prev) / prev) * 100;
 }
 
+/** 估值抓取时间转成 HH:MM，让用户一眼判断数据新鲜度 */
+function timeText(sec?: number | null) {
+  if (!sec) return '';
+  return new Date(sec * 1000).toLocaleTimeString('zh-CN', {
+    hour12: false, hour: '2-digit', minute: '2-digit',
+  });
+}
+
 interface DetailTarget {
   code: string;
   name: string;
@@ -109,6 +117,10 @@ export function FundsPage() {
   const [equity, setEquity] = useState<FundEquity | null>(null);
   const [equityState, setEquityState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [equityAt, setEquityAt] = useState<number | null>(null);
+  // 「刷新估值」按钮的状态：拉完顺便把整页数据一起重载，这样卡片上显示的
+  // 就是刚拉到的最新估值，不用再手动点一次刷新
+  const [quotePulling, setQuotePulling] = useState(false);
+  const [quoteNote, setQuoteNote] = useState('');
   const lastLoadAt = useRef(0);
   const [detail, setDetail] = useState<DetailTarget | null>(null);
   const [expandSummary, setExpandSummary] = useState(false);
@@ -163,6 +175,27 @@ export function FundsPage() {
     }
   }, [canDetail]);
 
+  /** 手动拉一次盘中估值：先刷新估值，再重载整页，让卡片立刻反映最新数 */
+  const pullQuotes = useCallback(async () => {
+    setQuotePulling(true);
+    setQuoteNote('');
+    try {
+      const r = await api.refreshFundQuotes();
+      if (!r.trading) {
+        setQuoteNote('当前不在盘中时段，展示的是最近一次估值');
+      } else if ((r.unresolved || []).length > 0) {
+        setQuoteNote(`已更新 ${r.written} 只，${r.unresolved!.join('、')} 未取到`);
+      } else {
+        setQuoteNote(`已更新 ${r.written} 只`);
+      }
+      await load();
+    } catch (err) {
+      setQuoteNote(err instanceof Error ? err.message : '拉取失败');
+    } finally {
+      setQuotePulling(false);
+    }
+  }, [load]);
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -182,7 +215,7 @@ export function FundsPage() {
   if (loading) {
     return (
       <div className="page">
-        <div className="grid cols-3">
+        <div className="fund-list">
           {[0, 1, 2, 3, 4, 5].map((i) => (
             <div className="card" key={i}>
               <div className="skeleton" style={{ width: 110 }} />
@@ -295,6 +328,15 @@ export function FundsPage() {
     const staleNow = Boolean(advice?.stale)
       && !(latestNavDate && advice?.tradeDate && latestNavDate >= advice.tradeDate);
 
+    // 盘中估值优先读服务端快照：定时器每 5 分钟刷新一次 fund_quote，
+    // 而 advice.estimate 是模型写入那一刻冻结的，不会跟着定时任务更新。
+    // 只有快照不可用（跨日或太久没刷新）时才退回模型带的那一份。
+    const live = data?.quotes?.[code];
+    const est = live && live.estimate != null
+      ? { estimate: live.estimate, estimatePct: live.estimatePct }
+      : { estimate: advice?.estimate ?? null, estimatePct: advice?.estimatePct ?? null };
+    const estStale = Boolean(live && !live.fresh);
+
     return (
       <div
         className="card hoverable fund-card"
@@ -343,6 +385,13 @@ export function FundsPage() {
                 待结算
               </span>
             )}
+            {/* 结算完也要留个痕迹，否则看不出今天到底操作过没有 */}
+            {canDetail && advice?.executed && advice?.settled && (
+              <span className="fund-tag is-done">
+                <Icon name="check" size={11} />
+                已入账
+              </span>
+            )}
             {/* 建议不是主工具给的、或在合并视图下 → 标出来源与日期。
                 单来源且是 WorkBuddy 时不显示，避免多余噪音 */}
             {advice && sourceTabs.length > 0 && (source === 'all' || advice.source !== 'workbuddy') && (
@@ -365,12 +414,19 @@ export function FundsPage() {
               )}
             </span>
           </div>
-          <div className="fund-metric">
-            <span className="fund-metric-label">盘中估值</span>
+          <div
+            className={`fund-metric${estStale ? ' is-stale' : ''}`}
+            title={live?.proxy
+              ? `来源：${live.proxy}${live.fresh ? '' : '（已过期，仅供参考）'}`
+              : undefined}
+          >
+            <span className="fund-metric-label">
+              盘中估值{live?.asOf ? ` ${timeText(live.asOf)}` : ''}
+            </span>
             <span className="fund-metric-value mono">
-              {advice?.estimate ?? '—'}
-              {advice?.estimatePct !== null && advice?.estimatePct !== undefined && (
-                <span className={`fund-sub ${toneClass(advice.estimatePct)}`}> {pctText(advice.estimatePct)}</span>
+              {est.estimate ?? '—'}
+              {est.estimatePct !== null && est.estimatePct !== undefined && (
+                <span className={`fund-sub ${toneClass(est.estimatePct)}`}> {pctText(est.estimatePct)}</span>
               )}
             </span>
           </div>
@@ -505,6 +561,19 @@ export function FundsPage() {
                 持仓配置
               </Link>
             )}
+            {/* 手动拉一次盘中估值。平时靠定时任务每 5 分钟自己刷，
+                想临时看一眼最新的（比如刚有大波动）就点这里 */}
+            <button
+              className="btn sm"
+              onClick={() => void pullQuotes()}
+              title="立即拉取实时盘中估值"
+              disabled={quotePulling}
+            >
+              <span className={quotePulling ? 'icon-spin' : undefined}>
+                <Icon name="refresh" size={13} />
+              </span>
+              {quotePulling ? '拉取中' : '刷新估值'}
+            </button>
             <button
               className="btn ghost sm"
               onClick={() => void load()}
@@ -517,6 +586,10 @@ export function FundsPage() {
             </button>
           </div>
         </div>
+
+        {quoteNote && (
+          <div className="faint" style={{ fontSize: 12, marginTop: 8 }}>{quoteNote}</div>
+        )}
 
         {/* 额度与收益一眼看完：模型就是照这几个数决定加仓节奏的 */}
         {canDetail && data.investment && data.investment.totalBudget > 0 && (
@@ -648,7 +721,7 @@ export function FundsPage() {
       </div>
 
       {data.holdings.length > 0 ? (
-        <div className="grid cols-3 mb-12">
+        <div className="fund-list mb-12">
           {data.holdings.map((h, i) => renderCard(h.code, h, i))}
         </div>
       ) : (
@@ -667,7 +740,7 @@ export function FundsPage() {
           <div className="faint" style={{ fontSize: 12, margin: '4px 0 10px' }}>
             以下基金有建议但未录入持仓（可能已清仓）：
           </div>
-          <div className="grid cols-3 mb-12">
+          <div className="fund-list mb-12">
             {extras.map((code, i) => renderCard(code, null, i + data.holdings.length))}
           </div>
         </>

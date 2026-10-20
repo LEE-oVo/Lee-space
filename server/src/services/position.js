@@ -590,6 +590,9 @@ export function equityCurve() {
       // 当日盈亏：市值变化剔除掉现金流，剩下的就是行情带来的。
       // 建仓当天买入即持有，没有「前一天」可比，所以恒为 0
       dailyProfit: round2(market - prevMarket - flowValue),
+      // 当日涨跌百分比（百分点）：与 dailyProfit 同源，只是换成相对量，
+      // 给模型看组合走势时用它，避免把金额透出去
+      dayPct: round2(dayReturn * 10000) / 100,
     });
     prevMarket = market;
   }
@@ -673,10 +676,14 @@ function curveSummary(points) {
  * 跌了又把额度算没，都会让模型的加仓节奏跟着行情抖。
  * 用户设的总额是「我最多拿多少钱出来投」，那就是现金流口径。
  */
-export function investmentSummary(cfg, today = null) {
+export function investmentSummary(cfg, today = null, opts = {}) {
   const db = getDb();
   const totalBudget = Number(cfg?.totalBudget) || 0;
   const targetReturnPct = Number(cfg?.targetReturnPct) || 0;
+  // 模型中立：给定时任务算额度时只统计它自己那一格。
+  // 一天里同一个基金只能采纳一条建议，让 A 看见 B 报了多少只会互相锚定，
+  // 那这份建议就不再独立了。跨来源的超额由我（人）在采纳时自己把关。
+  const scopeSource = opts.source || null;
 
   const cashIn = db.prepare(`SELECT COALESCE(SUM(amount), 0) AS v FROM fund_lots`).get().v || 0;
   const cashOut =
@@ -697,22 +704,26 @@ export function investmentSummary(cfg, today = null) {
       )
       .get().v || 0;
 
-  // 当天已排但还没执行的加仓：按每只基金取各来源最大值（同一天同一只只会成交一笔）。
-  // 不计入 used（那不是真金白银），但要让额度校验看得见，否则两个工具
-  // 同一天各排一笔就把总额排穿了
+  // 当天已排但还没执行的加仓：按每只基金取最大值（同一天同一只只会成交一笔）。
+  // 不计入 used（那不是真金白银），但要体现在 available 上。
+  // 传了 opts.source 时只算该来源的计划——给模型看的额度不能带上别人的判断，
+  // 否则「A 报了 500」这一条信息就会锚住 B 的报价。
   let todayPlanned = 0;
   if (today) {
-    todayPlanned =
-      db
-        .prepare(
-          `SELECT COALESCE(SUM(mx), 0) AS v FROM (
-             SELECT MAX(amount) AS mx FROM fund_advice
-              WHERE trade_date = ? AND settled = 0 AND executed = 0
-                AND action IN ('buy','add') AND amount IS NOT NULL
-              GROUP BY code
-           )`
-        )
-        .get(today).v || 0;
+    // 带了 source 就只统计这个来源自己排的计划（模型中立）；没带就把所有来源合并，
+    // 那是页面/核对视角，需要看到「今天一共排出去多少」
+    const sql = `SELECT COALESCE(SUM(mx), 0) AS v FROM (
+       SELECT MAX(amount) AS mx FROM fund_advice
+        WHERE trade_date = ${scopeSource ? '@date' : '?'}
+          AND settled = 0 AND executed = 0
+          AND action IN ('buy','add') AND amount IS NOT NULL
+          ${scopeSource ? `AND IFNULL(source,'workbuddy') = @source` : ''}
+        GROUP BY code
+     )`;
+    const row = scopeSource
+      ? db.prepare(sql).get({ date: today, source: scopeSource })
+      : db.prepare(sql).get(today);
+    todayPlanned = row?.v || 0;
   }
 
   const netInvested = round2(cashIn - cashOut);
@@ -798,6 +809,71 @@ export function holdingView(code) {
     redemptionFee: parseFeeRules(holding.redemption_fee),
     feeSource: holding.fee_source || '',
     lots: agg.lots,
+  };
+}
+
+/**
+ * 给模型看的组合曲线：只给形状与相对量，不给金额。
+ *
+ * 它需要知道「整体是在稳步修复，还是刚从深坑里往上爬」——这直接决定该进攻还是守成，
+ * 而单看一个 returnPct 快照看不出这两者的区别。
+ * 金额一律不下发：模型要的是走势形态，不是我的市值数字。
+ */
+export function curveForAutomation(limit = 20) {
+  const curve = equityCurve();
+  if (!curve.points.length) return null;
+  const n = Math.min(Math.max(Number(limit) || 20, 5), 200);
+  const tail = curve.points.slice(-n);
+  const s = curve.summary || {};
+  return {
+    from: tail[0].date,
+    to: tail[tail.length - 1].date,
+    days: s.days ?? curve.points.length,
+    points: tail.map((p) => ({
+      date: p.date,
+      returnPct: p.returnPct,
+      twrPct: p.twrPct,
+      dayPct: p.dayPct ?? null,
+    })),
+    // 区间统计：回撤按 TWR 算，涨跌天数看这段时间是单边还是震荡
+    maxDrawdownPct: s.maxDrawdownPct ?? null,
+    maxDrawdownAt: s.maxDrawdownAt ?? null,
+    peakPct: s.peakPct ?? null,
+    troughPct: s.troughPct ?? null,
+    upDays: s.upDays ?? null,
+    downDays: s.downDays ?? null,
+  };
+}
+
+/**
+ * 减仓成本提示：最早那批还要多久降档、现在卖要扣多少。
+ *
+ * 卖出是按批次 FIFO 的，最先卖掉的一定是最早买入的那批，所以持有天数取
+ * 「仍有剩余份额的最早批次」。模型不知道这个数就会在 7 天内建议减仓——
+ * 1.5% 的赎回费足以把一笔聪明的高抛变成亏钱操作。
+ */
+export function holdingAgeInfo(code, today, holding = null) {
+  const h = holding || getHolding(code);
+  if (!h) return null;
+  const rules = parseFeeRules(h.redemption_fee);
+  const lots = lotsOf(code).filter((l) => Number(l.remain) > 0);
+  if (!lots.length) return null;
+  const earliest = lots.reduce((m, l) => (l.buy_date < m.buy_date ? l : m));
+  const minHoldDays = dayDiff(earliest.buy_date, today);
+
+  // 下一个会降档的天数边界：所有大于当前持有天数的 days 里最小的那个
+  let next = null;
+  for (const r of rules) {
+    if (r.days === null) continue;
+    if (r.days > minHoldDays && (next === null || r.days < next)) next = r.days;
+  }
+
+  return {
+    earliestBuyDate: earliest.buy_date,
+    minHoldDays,
+    currentFeePct: feeRateFor(rules, minHoldDays),
+    daysToNextTier: next === null ? null : next - minHoldDays,
+    nextTierFeePct: next === null ? null : feeRateFor(rules, next),
   };
 }
 

@@ -259,7 +259,11 @@ body,
 }
 .page {
   animation: page-in 0.36s var(--ease);
-  max-width: 1180px;
+  /* 之前写死 1180px 且未居中：宽屏上内容全挤在左侧，右边空一大块，
+     看着像没加载完。这里直接取消上限——工作台主体是卡片栅格与图表，
+     本身就是越宽越好，不需要版心。长文本段落另在 .fund-market 里限宽，
+     避免一行拉太长影响阅读。 */
+  max-width: none;
 }
 @keyframes page-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -1035,6 +1039,9 @@ table.data tbody tr:hover {
   color: var(--c-text-dim);
   margin-top: 10px;
   white-space: pre-wrap;
+  /* 页面整体已不限宽，但正文行长要收一下：
+     超过 ~900px 后眼睛换行容易串行 */
+  max-width: 900px;
   animation: fund-rise 0.5s var(--ease) 0.1s backwards;
 }
 @keyframes fund-rise {
@@ -1099,13 +1106,16 @@ table.data tbody tr:hover {
 }
 .fund-card-title { min-width: 0; }
 .fund-code { margin-top: 1px; }
-/* 状态区靠右对齐、纵向堆叠；chip 与标签都不允许被压缩或换行 */
+/* 状态区靠右、横向排列，放不下才换行。
+   之前是纵向堆叠，四个徽章会把卡片撑高一大截；
+   每个徽章内部有 white-space: nowrap，换行时是整块落下而不是被压变形 */
 .fund-card-status {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 5px;
-  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px 6px;
+  flex: 0 1 auto;
 }
 
 /* ---------- 状态 chip：操作建议 ---------- */
@@ -1177,10 +1187,26 @@ table.data tbody tr:hover {
   background: color-mix(in srgb, currentColor 12%, transparent);
   animation: fund-chip-in 0.42s var(--ease) 0.2s backwards;
 }
+/* 已结算：用中性/正向色，和「待结算」的警示黄区分开 */
+.fund-tag.is-done {
+  color: var(--c-text-faint);
+  border-style: solid;
+  background: transparent;
+}
 
+/* 基金卡片独占一行：之前一行挤 4 张，每张才 ~290px，
+   指标和徽章都得挤着放，长基金名还会换行。铺满整行后信息能平铺开，
+   横向看一只基金的净值/估值/盈亏也更连贯。 */
+.fund-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
 .fund-metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  /* 卡片变宽后若仍用 1fr，三列会各撑到 500px+，数字孤零零摆中间很难读。
+     这里给列宽封顶 ~170px 并靠左排 */
+  grid-template-columns: repeat(auto-fit, minmax(118px, 170px));
   gap: 10px;
   margin: 14px 0 4px;
 }
@@ -1192,8 +1218,10 @@ table.data tbody tr:hover {
   border-radius: var(--radius-sm);
   background: var(--c-surface-2);
   animation: fund-rise 0.42s var(--ease) backwards;
-  transition: background-color 0.2s var(--ease);
+  transition: background-color 0.2s var(--ease), opacity 0.2s var(--ease);
 }
+/* 估值快照过期（跨日或久未刷新）→ 弱化显示，标签上带抓取时间，不假装实时 */
+.fund-metric.is-stale { opacity: 0.6; }
 .fund-metric:nth-child(1) { animation-delay: 0.16s; }
 .fund-metric:nth-child(2) { animation-delay: 0.22s; }
 .fund-metric:nth-child(3) { animation-delay: 0.28s; }

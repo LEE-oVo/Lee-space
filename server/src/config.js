@@ -116,6 +116,8 @@ export const config = {
   fundDailyAddBudget: Number(process.env.FUND_DAILY_ADD_BUDGET || 0),
   // 低于这个金额不值得下单：剩余额度不足时直接判持有，而不是拆出一笔零头
   fundMinAddAmount: Number(process.env.FUND_MIN_ADD || 10),
+  // 单只基金占总投资额的上限（百分比）。0 = 不限制
+  fundMaxWeightPct: Number(process.env.FUND_MAX_WEIGHT_PCT || 35),
   fileMaxMb: Number(process.env.FILE_MAX_MB || 20),
   fileQuotaMb: Number(process.env.FILE_QUOTA_MB || 2048),
   // 未配置任何令牌时 ingest 接口直接关闭（返回 503），避免开着无鉴权的写接口。

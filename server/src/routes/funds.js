@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requirePermission, denyGuest, requireFundIngest, requireFundSettle, clientIp, hasPermission } from '../middleware/auth.js';
 import { writeAudit } from '../db/repo.js';
 import { config } from '../config.js';
-import { holdingView, pendingSettlements, settleDay, updateFees, investmentSummary, settlementAudit, equityCurve } from '../services/position.js';
+import { holdingView, pendingSettlements, settleDay, updateFees, investmentSummary, settlementAudit, equityCurve, curveForAutomation } from '../services/position.js';
 import { getFundConfig, updateFundConfig } from '../services/fundConfig.js';
 import {
   FUND_ACTIONS,
@@ -28,6 +28,7 @@ import {
   upsertManualRecord,
   holdingsForAutomation,
 } from '../services/funds.js';
+import { quoteForAutomation, readQuotes, refreshQuotes } from '../services/quote.js';
 
 const router = Router();
 const CODE_RE = /^[A-Za-z0-9]{4,12}$/;
@@ -46,6 +47,11 @@ function amountRules(cfg = getFundConfig(), invest = null) {
   parts.push(daily > 0
     ? `每日加仓上限 ${daily} 元，两个工具共用；`
     : '不设每日加仓上限——钱要留到确定性高的机会上，不要被日限额摊平成定投；');
+  const maxWeight = Number(cfg.maxWeightPct) || 0;
+  if (maxWeight > 0) {
+    parts.push(`单只基金累计投入不超过总额的 ${maxWeight}%（见 holdings[].weightPct）；`
+      + '已超过或本次会超过时，必须在 reason 里给出理由，没有强理由就给占比更低的那只；');
+  }
   parts.push('超过剩余额度时服务端会自动削减或改成持有，请自己先看余额再报。');
   return {
     unit: 100,
@@ -53,6 +59,7 @@ function amountRules(cfg = getFundConfig(), invest = null) {
     totalBudget: total,
     dailyAddBudget: daily,
     minAddAmount: cfg.minAddAmount,
+    maxWeightPct: maxWeight || null,
     targetReturnPct: cfg.targetReturnPct,
     remaining: invest ? invest.remaining : null,
     note: parts.join(''),
@@ -91,6 +98,9 @@ router.get('/', requirePermission('fund:view'), (req, res) => {
     // 库里实际有哪些来源：只有一个来源时页面不显示切换器
     sources: adviceSources(),
     sourceLabels: SOURCE_LABELS,
+    // 服务端统一拉的盘中估值快照（不含金额，游客也能看）。
+    // 页面优先用它，而不是建议里模型自己带的 estimate——大盘只有一个真相
+    quotes: readQuotes(),
     settleSources: config.fundSettleSources,
     scope: detail ? 'full' : 'public',
   });
@@ -123,6 +133,7 @@ router.patch('/config', requirePermission('fund:manage'), denyGuest, (req, res) 
       targetReturnPct: req.body?.targetReturnPct,
       dailyAddBudget: req.body?.dailyAddBudget,
       minAddAmount: req.body?.minAddAmount,
+      maxWeightPct: req.body?.maxWeightPct,
     },
     req.user?.id ?? null
   );
@@ -164,21 +175,52 @@ router.get('/history', requirePermission('fund:view'), (req, res) => {
 router.get('/holdings', requireFundIngest, (req, res) => {
   const date = String(req.query.date || todayStr());
   const cfg = getFundConfig();
-  const invest = investmentSummary(cfg, date);
+  // 按调用方自己的来源算额度：others 的建议不参与，模型看到的就是它自己那一格。
+  // 每个工具应该是独立判断，最后由我在几条里挑一条采纳——不是互相说服。
+  const invest = investmentSummary(cfg, date, { source: req.fundSource });
+  const quotes = readQuotes();
   res.json({
     // 告诉任务服务端把它判成了哪个来源：任务侧不用再自己声明，也不该自己声明
     source: req.fundSource,
-    holdings: holdingsForAutomation(Number(req.query.limit) || 12),
+    holdings: holdingsForAutomation(Number(req.query.limit) || 12, {
+      source: req.fundSource,
+      quotes,
+      invest,
+      today: date,
+    }).map((h) => ({
+      ...h,
+      // 盘中估值：服务端定时程序统一抓的，模型直接用，不要再自己去拉行情——
+      // 行情源能不能通取决于出口网络，各家拉出来的结果经常不一样
+      quote: quoteForAutomation(h.code, quotes),
+    })),
     // 结算后的真实持仓，让模型知道当前份额与成本
     positions: Object.fromEntries(listHoldings().map((h) => [h.code, holdingView(h.code)])),
     amountRules: amountRules(cfg, invest),
     // 总投资额与剩余：模型分配加仓金额的主要依据（不是每日限额）
     investment: invest,
-    // 当天共享额度池的占用情况（没设日限时 remain 为 null）
-    todayAllocation: todayAllocation(date, cfg),
+    // 组合走势（只有相对量，不含金额）：让模型知道整体是在修复还是刚从回撤里爬出来，
+    // 这决定该进攻还是守成——只看 returnPct 一个快照看不出区别
+    curve: curveForAutomation(20),
+    // 这里不再下发 todayAllocation：它和 investment.todayPlanned 是同一个东西的两份口径
+    // （那份没过滤 executed，数字还对不上），给模型看两套数只会让它犯嘀咕
     // 本来源能不能写账本（Trae 兜底时两边都可写）
     canSettle: config.fundSettleSources.length === 0 || config.fundSettleSources.includes(req.fundSource),
   });
+});
+
+// 手动拉一次盘中估值。页面上的「刷新估值」按钮打这里，
+// 和定时任务走的是同一个函数，结果也写进同一张表，两边不会打架。
+router.post('/quote/refresh', requirePermission('fund:view'), denyGuest, async (req, res) => {
+  const result = await refreshQuotes();
+  audit(req, 'fund.quote.refresh', '', `${result.reason || 'ok'} 写入 ${result.written} 只`);
+  return res.json(result);
+});
+
+// 估值快照（只读不算），供页面展示
+router.get('/quote', requirePermission('fund:view'), (req, res) => {
+  const items = readQuotes();
+  const asOf = Object.values(items).reduce((max, q) => Math.max(max, q.asOf || 0), 0);
+  res.json({ items, asOf });
 });
 
 // 结算任务的第一步：看看有哪些已执行但还没入账的操作

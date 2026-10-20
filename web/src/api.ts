@@ -65,6 +65,12 @@ export const api = {
     ),
   // 组合层面的每日收益曲线（含金额，需要 fund:detail）
   fundEquity: () => request<FundEquity>('/funds/equity'),
+  // 手动拉一次盘中估值（和定时任务同一个函数，写同一张表）
+  refreshFundQuotes: () =>
+    request<{ ok: boolean; trading: boolean; written: number; unresolved?: string[]; asOf: number }>(
+      '/funds/quote/refresh',
+      { method: 'POST' }
+    ),
   createFundRecord: (payload: Record<string, unknown>) =>
     request<{ ok: boolean; id: number | null; allocation: { used: number; budget: number; remain: number } }>(
       '/funds/records',
