@@ -1,6 +1,7 @@
 import type {
-  AuditLog, DshStatus, FileItem, FileQuota, FundAdvice, FundConfig, FundEquity, FundHolding, FundInvestment,
-  FundNavPoint, FundOverview, PermissionRecord, RoleRecord, SystemStats, User, WeatherData, WorkbenchUser,
+  AuditLog, DshStatus, FileItem, FileQuota, FundAdvice, FundConfig, FundEquity, FundEvaluation, FundHolding,
+  FundInvestment, FundNavPoint, FundOverview, PermissionRecord, RoleRecord, SystemStats, User, WeatherData,
+  WorkbenchUser,
 } from './types';
 
 // 注意：/api 前缀已整段让给 DeepSeek Harness，工作台自身接口统一走 /wb-api
@@ -65,6 +66,7 @@ export const api = {
     ),
   // 组合层面的每日收益曲线（含金额，需要 fund:detail）
   fundEquity: () => request<FundEquity>('/funds/equity'),
+  fundEvaluation: () => request<FundEvaluation>('/funds/evaluation'),
   // 手动拉一次盘中估值（和定时任务同一个函数，写同一张表）
   refreshFundQuotes: () =>
     request<{ ok: boolean; trading: boolean; written: number; unresolved?: string[]; asOf: number }>(

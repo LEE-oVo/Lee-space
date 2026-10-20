@@ -289,6 +289,234 @@ export interface FundEquity {
   totalBudget: number;
 }
 
+/* ---------- 事后评估 ---------- */
+
+/** 某组建议在某个前瞻窗口上的统计（三大口径各一套） */
+export interface EvalStat {
+  label: string;
+  count: number;
+  /** 样本不足门槛（默认 5），不足时数字只作参考 */
+  insufficient: boolean;
+  avgScorePct: number | null;
+  medianScorePct: number | null;
+  stdScorePct: number | null;
+  winRate: number | null;
+  wins: number;
+  losses: number;
+  /** 得 0 分的行（机会成本口径下的 hold）：既不算胜也不算负 */
+  even: number;
+  bestScorePct: number | null;
+  best: EvalBrief | null;
+  worstScorePct: number | null;
+  worst: EvalBrief | null;
+}
+
+export interface EvalBrief {
+  id: number;
+  code: string;
+  name: string;
+  tradeDate: string;
+  action: FundAction;
+  source: string;
+  amount: number;
+  value: number;
+}
+
+/** 金额口径：按各自建议金额折算成元 */
+export interface EvalMoneyStat {
+  label: string;
+  count: number;
+  insufficient: boolean;
+  totalProfit: number;
+  avgProfit: number;
+  avgReturnPct: number | null;
+  wins: number;
+  losses: number;
+}
+
+export interface EvalWindowStat {
+  key: string;
+  label: string;
+  days: number;
+  /** 方向口径：只算真正下注的建议 */
+  directional: EvalStat;
+  /** 机会成本口径：所有建议都算，hold 记 0 */
+  opportunity: EvalStat;
+  money: EvalMoneyStat;
+  hold: {
+    count: number;
+    avgFwdPct: number | null;
+    /** 持有期间基金下跌的次数（避开了亏损） */
+    avoidedDrop: number;
+    /** 持有期间基金上涨的次数（踏空了） */
+    missedRise: number;
+  };
+}
+
+/** 一条建议的前瞻得分 */
+export interface EvalRow {
+  id: number;
+  code: string;
+  name: string;
+  tradeDate: string;
+  source: string;
+  sourceLabel: string;
+  action: FundAction;
+  confidence: string | null;
+  amount: number;
+  adopted: boolean;
+  settled: boolean;
+  bet: 'long' | 'short' | 'none';
+  status: 'ok' | 'awaiting' | 'pending-nav';
+  baseNav: number | null;
+  /** 基金自身的前瞻涨跌（百分点），key 为窗口 key */
+  fwd: Record<string, number | null>;
+  /** 方向口径得分 */
+  score: Record<string, number | null>;
+  /** 机会成本口径得分 */
+  unit: Record<string, number | null>;
+  /** 金额口径：照这条建议做，这笔钱 N 天后多赚（元） */
+  profit: Record<string, number | null>;
+  hit: Record<string, boolean | null>;
+}
+
+/** 按来源 / 基金 / 置信度拆分出来的分组，key 由 groupStats 拼成 */
+export interface EvalGroup extends EvalWindowStat {
+  source?: string;
+  sourceLabel?: string;
+  code?: string;
+  name?: string;
+  confidence?: string;
+}
+
+/** 层 ②：某来源（或完全不操作）的模拟组合 */
+export interface EvalSimulation {
+  source: string;
+  sourceLabel: string;
+  isBaseline: boolean;
+  points: FundEquityPoint[];
+  trades: number;
+  adviceDays: number;
+  startDate: string | null;
+  summary: FundEquitySummary | null;
+}
+
+export interface EvalPickCandidate {
+  source: string;
+  sourceLabel: string;
+  action: FundAction;
+  confidence: string | null;
+  amount: number;
+  scorePct: number | null;
+  profit: number | null;
+}
+
+/** 层 ③：同一天同一只基金，人挑的那条 vs 没挑的那几条 */
+export interface EvalDecision {
+  code: string;
+  name: string;
+  tradeDate: string;
+  window: string;
+  windowLabel: string;
+  fundFwdPct: number | null;
+  chosen: EvalPickCandidate;
+  bestScorePct: number | null;
+  bestSources: string[];
+  otherMeanPct: number | null;
+  /** 每元口径：不管金额，纯比判断 */
+  pickValuePct: number;
+  /** 金额口径：按各自建议金额折算成元 */
+  pickValueYuan: number;
+  rank: number;
+  participants: number;
+  wasBest: boolean;
+  rejected: EvalPickCandidate[];
+}
+
+export interface EvalUndecided {
+  code: string;
+  name: string;
+  tradeDate: string;
+  window: string;
+  windowLabel: string;
+  fundFwdPct: number | null;
+  candidates: EvalPickCandidate[];
+}
+
+export interface FundEvaluation {
+  generatedAt: number;
+  primary: string;
+  minSamples: number;
+  windows: { key: string; days: number; label: string }[];
+  notes: string[];
+  scorecard: {
+    rows: EvalRow[];
+    allRows: EvalRow[];
+    rowCount: number;
+    truncated: boolean;
+    windows: Record<string, EvalWindowStat>;
+    windowSampleCounts: Record<string, number>;
+    windowBetCounts: Record<string, number>;
+    primary: string;
+    primaryInsufficient: boolean;
+    minSamples: number;
+    span: { from: string; to: string; days: number } | null;
+    bySource: EvalGroup[];
+    byFund: EvalGroup[];
+    byConfidence: EvalGroup[];
+    bySourceFund: EvalGroup[];
+    bySourceConfidence: EvalGroup[];
+    sources: string[];
+  };
+  simulations: EvalSimulation[];
+  vsBaseline: Record<
+    string,
+    {
+      sourceLabel: string;
+      twrPct: number | null;
+      twrVsBaselinePct: number | null;
+      returnVsBaselinePct: number | null;
+      extraInvested: number;
+      trades: number;
+    }
+  >;
+  syncNote: string;
+  baselineKey: string;
+  picks: {
+    windowNote: string;
+    primary: string;
+    count: number;
+    insufficient: boolean;
+    minSamples: number;
+    bestRate: number | null;
+    avgPickValuePct: number | null;
+    avgPickValueYuan: number | null;
+    totalPickValueYuan: number;
+    positive: number;
+    negative: number;
+    decisions: EvalDecision[];
+    undecided: EvalUndecided[];
+    bySource: {
+      source: string;
+      sourceLabel: string;
+      chosen: number;
+      bestCount: number;
+      worstCount: number;
+      bestRate: number | null;
+      avgPickValuePct: number | null;
+      avgPickValueYuan: number | null;
+      totalPickValueYuan: number;
+    }[];
+  };
+  actualSummary: FundEquitySummary | null;
+  isolation: {
+    feedbackAllowed: boolean;
+    allowed: string[];
+    forbidden: string[];
+    reason: string;
+  };
+}
+
 export interface FundOverview {
   daily: FundDaily | null;
   /** 每个来源各自最新一天的整体结论，页面切来源时跟着换 */

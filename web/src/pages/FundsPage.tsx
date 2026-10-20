@@ -6,9 +6,10 @@ import { Icon } from '../components/Icon';
 import { NavChart } from '../components/NavChart';
 import { EquityChart } from '../components/EquityChart';
 import { FundDetailModal } from '../components/FundDetailModal';
+import { FundEvaluationPanel } from '../components/FundEvaluationPanel';
 import { formatRelative } from '../lib/format';
 import type {
-  FundAdvice, FundAction, FundEquity, FundHolding, FundNavPoint, FundOverview, FundPosition,
+  FundAdvice, FundAction, FundEquity, FundEvaluation, FundHolding, FundNavPoint, FundOverview, FundPosition,
 } from '../types';
 
 const ACTION_LABEL: Record<FundAction, string> = {
@@ -117,6 +118,9 @@ export function FundsPage() {
   const [equity, setEquity] = useState<FundEquity | null>(null);
   const [equityState, setEquityState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [equityAt, setEquityAt] = useState<number | null>(null);
+  // 事后评估：也是全量重算，和收益曲线一样单独拉、单独存状态
+  const [evaluation, setEvaluation] = useState<FundEvaluation | null>(null);
+  const [evalState, setEvalState] = useState<'loading' | 'ready' | 'error'>('loading');
   // 「刷新估值」按钮的状态：拉完顺便把整页数据一起重载，这样卡片上显示的
   // 就是刚拉到的最新估值，不用再手动点一次刷新
   const [quotePulling, setQuotePulling] = useState(false);
@@ -157,7 +161,8 @@ export function FundsPage() {
       });
       setSeries(map);
       // 收益曲线单独一个请求：它算的是全量历史，慢一点也不该拖住上面的卡片。
-      // 每次都是重新从库里算，结算跑完只要刷新就是新的
+      // 每次都是重新从库里算，结算跑完只要刷新就是新的。
+      // 事后评估同理，且它俩要同时成功/失败地刷新，不能一个显示新一个显示旧
       if (canDetail) {
         try {
           setEquity(await api.fundEquity());
@@ -165,6 +170,12 @@ export function FundsPage() {
           setEquityState('ready');
         } catch {
           setEquityState('error');
+        }
+        try {
+          setEvaluation(await api.fundEvaluation());
+          setEvalState('ready');
+        } catch {
+          setEvalState('error');
         }
       }
     } catch (err) {
@@ -650,6 +661,25 @@ export function FundsPage() {
               </div>
             ) : (
               <div className="equity-empty">收益曲线加载中…</div>
+            )}
+          </div>
+        )}
+
+        {/* 事后评估：每条建议按自己的未来净值单独打分。
+            ②③ 两层含跨来源横向比较与人自己的取舍，只在这里看，绝不回传给模型 */}
+        {canDetail && (
+          <div className="card eval-card">
+            {evalState === 'ready' && evaluation ? (
+              <FundEvaluationPanel data={evaluation} />
+            ) : evalState === 'error' ? (
+              <div className="equity-empty">
+                事后评估加载失败
+                <button type="button" className="btn ghost sm" style={{ marginLeft: 8 }} onClick={() => void load()}>
+                  重试
+                </button>
+              </div>
+            ) : (
+              <div className="equity-empty">事后评估计算中…</div>
             )}
           </div>
         )}

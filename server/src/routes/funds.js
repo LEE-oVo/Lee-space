@@ -29,6 +29,7 @@ import {
   holdingsForAutomation,
 } from '../services/funds.js';
 import { quoteForAutomation, readQuotes, refreshQuotes } from '../services/quote.js';
+import { evaluationReport } from '../services/evaluation.js';
 
 const router = Router();
 const CODE_RE = /^[A-Za-z0-9]{4,12}$/;
@@ -118,6 +119,30 @@ router.get('/equity', requirePermission('fund:detail'), denyGuest, (_req, res) =
     targetReturnPct: Number(cfg.targetReturnPct) || 0,
     totalBudget: Number(cfg.totalBudget) || 0,
   });
+});
+
+/**
+ * 事后评估：每条建议各自对着未来净值打分。
+ *
+ * 权限给到 fund:detail + denyGuest，不只是因为里面有金额——更重要的是②③两层
+ * 含「人被采纳率」和跨来源横向比较，这些数一旦能被另一个模型看到，
+ * 它就会照着排行榜调整答案，评估本身就失效了。所以这里连游客入口都不留。
+ *
+ * 支持 ?source=xxx 与 ?limit=N 收窄层 ① 的明细表；②③ 始终算全量，
+ * 因为它们是整体对照，截断了就没意义了。
+ */
+router.get('/evaluation', requirePermission('fund:detail'), denyGuest, (req, res) => {
+  const source = String(req.query.source || '').trim() || undefined;
+  const limit = Number(req.query.limit) || 0;
+  // 真实组合的结果从 equityCurve 取——必须和页面卡片上那条曲线同一个口径，
+  // 否则「真实 vs 全听某家」的对照就是两个算法在比，说什么都不能信
+  const actual = equityCurve();
+  const report = evaluationReport({
+    source,
+    limit: limit > 0 ? Math.min(limit, 500) : 0,
+    actualSummary: actual.summary,
+  });
+  res.json(report);
 });
 
 // 投资配置：总投资额 / 目标收益率 / 每日加仓上限。读写都要 fund:manage
