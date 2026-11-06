@@ -1183,12 +1183,17 @@ export function swingBasis(code, price, holding = null, feeFreeAmount = null, pr
   }
   // 金额必须整百，服务端直接砍好，省得模型再算一遍又算错
   const suggestedAmount = Math.floor(sellableAmount / 100) * 100;
+  // 已平掉大半后可能只剩几块钱：这时 qualifiedCount 仍 > 0，但报出去会让
+  // /ingest 因 amount=0 拒绝。明确标出来，别让 note 说「可以全卖」误导模型。
+  const belowMinLot = qualified.length > 0 && suggestedAmount < 100;
 
   const closedNote = closedShares > 0.000001
     ? `已扣除 ${round2(closedShares)} 份此前减仓过的加仓批次（不再重复建议）；`
     : '';
   let note;
-  if (!lots.length) {
+  if (belowMinLot) {
+    note = `${closedNote}达标批次只剩 ¥${candidateAmount}，砍成整百后不足一手，今天不做波段`;
+  } else if (!lots.length) {
     note = closedNote
       ? `${closedNote}已没有剩余可做波段的加仓仓位，今天不做波段`
       : '还没有系统上线后的加仓批次，没有可做波段的仓位；底仓成本只影响卖出记账';
@@ -1224,6 +1229,8 @@ export function swingBasis(code, price, holding = null, feeFreeAmount = null, pr
     sellableAmount,
     /** 再砍成整百，模型直接用这个数报 amount */
     suggestedAmount,
+    /** true = 还剩一点达标份额但不足一手，今天应给 hold，不要报 amount=0 的卖出 */
+    belowMinLot,
     /** candidates=受限于达标金额；feeFree=受限于 0 费额度；null=没有达标批次 */
     cappedBy,
     feeFreeAmount: free,

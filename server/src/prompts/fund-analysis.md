@@ -71,7 +71,8 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
 - **`swingBasis`** —— **今天能卖哪一部分（已逐批算好）**：
   `price` / `priceSource`（`estimate`=盘中估值，`nav`=最近净值）/ `targetPct` / `triggerPct` /
   `lots[]` / `qualifiedCount` / `qualifiedShares` / `candidateAmount` / `sellableAmount` /
-  `suggestedAmount` / `cappedBy` / `feeFreeAmount` / `closedShares` / `closedSellCount` / `note`
+  `suggestedAmount` / `cappedBy` / `feeFreeAmount` / `closedShares` / `closedSellCount` /
+  `belowMinLot` / `note`
   - `lots[]` 每个加仓批次一条：`buyDate` / `unitCost` / `shares` / `closedShares` /
     `gainPct` / `marketValue` / `qualifies`
   - **`qualifies: true` 的批次就是今天可以卖的部分，每批独立判断**
@@ -273,7 +274,8 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
   - `candidates` → 达标的部分可以全卖
   - `feeFree` → 0 费额度不够，只能卖这么多，**reason 里要说明剩下的下次再卖**
   - `null`（`qualifiedCount === 0`）→ **今天不做波段，给 hold**
-- `suggestedAmount` 小于 100 时说明不够一手，也别卖
+- `suggestedAmount` 小于 100（或 `belowMinLot = true`）时说明不够一手，给 **hold**，
+  **不要报一笔 `amount=0` 的卖出**（会被服务端拒绝）
 - 单次卖出不超过该基金当前份额的 **50%**
 - 必须给 `buyBackPrice`（计划回补价），且 **≤ 现价 × 0.98**
 - 卖出后若没跌到 `buyBackPrice`，说明这次波段没等到：**不要追高买回**，
