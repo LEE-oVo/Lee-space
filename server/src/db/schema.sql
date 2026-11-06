@@ -203,6 +203,11 @@ CREATE TABLE IF NOT EXISTS fund_advice (
   source       TEXT    NOT NULL DEFAULT 'workbuddy',
   -- 结算由哪一端完成，仅作追溯；账本只结算一次
   settled_source TEXT,
+  -- 卖出意图：swing（波段止盈）/ risk（降风险）/ rebalance（再平衡）。
+  -- 复盘时要能把「波段」单独拎出来评，否则会跟止损混在一起算
+  intent         TEXT,
+  -- 波段计划回补价：卖出后打算跌到这个价再买回，用来判断这次波段成没成
+  buy_back_price REAL,
   created_at   INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
   updated_at   INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
 );

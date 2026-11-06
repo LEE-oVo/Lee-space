@@ -188,6 +188,94 @@ export interface FundPosition {
   redemptionFee: Array<{ days: number | null; fee: number }>;
   feeSource: string;
   lots: number;
+  /** 批次明细（FIFO 顺序，卖出按这个顺序消耗） */
+  lotList?: FundLotDetail[];
+  /** 0 费卖出额度：这次能卖多少钱不扣赎回费 */
+  sellPlan?: FundSellPlan | null;
+  /** 波段参考：该不该卖。与 lotList[0]（底仓）无关 */
+  swingBasis?: FundSwingBasis | null;
+}
+
+/**
+ * 波段判断：**逐个加仓批次**算浮盈，达标的合计，再和 0 费额度取小。
+ *
+ * 两个坑都记在这里：① 不能用 FIFO 队首（那是原始底仓，成本高于现价 10~22%，
+ * 「浮盈 ≥3%」永远不成立）；② 也不能只看最近一次加仓——每次加仓是独立的小仓位。
+ */
+export interface FundSwingLot {
+  buyDate: string;
+  unitCost: number;
+  shares: number;
+  gainPct: number | null;
+  /** 这一批按现价能卖多少钱 */
+  marketValue: number;
+  qualifies: boolean;
+}
+
+export interface FundSwingBasis {
+  price: number;
+  /** 这个价是哪来的：estimate=盘中实时估值，nav=最近一期已公布净值 */
+  priceSource: 'estimate' | 'nav';
+  /** 目标止盈线（%） */
+  targetPct: number;
+  /** 实际触发线（%），含估值噪声余量 */
+  triggerPct: number;
+  lots: FundSwingLot[];
+  qualifiedCount: number;
+  qualifiedShares: number;
+  /** 达标批次按现价合计能卖多少钱 */
+  candidateAmount: number;
+  /** 实际可卖金额（已和 0 费额度取小） */
+  sellableAmount: number;
+  /** 再砍成整百，直接拿去报 amount */
+  suggestedAmount: number;
+  /** candidates=受限于达标金额；feeFree=受限于 0 费额度；null=没有达标批次 */
+  cappedBy: 'candidates' | 'feeFree' | null;
+  feeFreeAmount: number | null;
+  note: string;
+}
+
+/**
+ * 一个持仓批次。
+ *
+ * base = 原始底仓：前半年反复投入累积的结果，没有单一买入日、
+ * 也没有单一单位净值，unitCost 是加权平均。它整批豁免赎回费。
+ * buy = 系统上线后按建议买入的批次，日期与净值都真实。
+ */
+export interface FundLotDetail {
+  kind: 'base' | 'buy';
+  /** base 为 null —— 底仓没有可信买入日，宁可空着也不给假日期 */
+  buyDate: string | null;
+  dateKnown: boolean;
+  unitCost: number;
+  shares: number;
+  costAmount: number;
+  /** base 为 null —— 半年累积，算不出一个持有天数 */
+  daysHeld: number | null;
+  feePct: number;
+  /** true 表示整批豁免赎回费（原始底仓） */
+  feeExempt: boolean;
+  source: string | null;
+}
+
+export interface FundSellSegment {
+  feePct: number;
+  shares: number;
+  /** 卖到这个份额时的累计上限 */
+  uptoShares: number;
+  /** 卖到这个金额时的累计上限 */
+  uptoAmount: number;
+}
+
+export interface FundSellPlan {
+  nav: number;
+  totalShares: number;
+  feeFreeShares: number;
+  feeFreeAmount: number;
+  /** 原始底仓的汇总，页面单独展示成「历史累积仓位」 */
+  base: { shares: number; costAmount: number; unitCost: number; feeExempt: boolean } | null;
+  segments: FundSellSegment[];
+  note: string;
 }
 
 /** 投资目标与额度约束（页面可改，改完立刻生效） */
@@ -200,6 +288,27 @@ export interface FundConfig {
   dailyAddBudget: number;
   /** 低于这个金额不下单 */
   minAddAmount: number;
+  /** 波段止盈线（%）：单次加仓浮盈到这个比例就卖掉那部分 */
+  swingTargetPct: number;
+}
+
+/** 一个提示词模板（工作台托管，各执行方都从这里取） */
+export interface FundPromptTemplate {
+  kind: string;
+  label: string;
+  text: string;
+  /** true = 页面上改过（存在 settings 里）；false = 用代码里的出厂默认 */
+  isCustom: boolean;
+  updatedAt: number | null;
+  /** 必须保留的占位符，删了渲染出来就缺令牌 */
+  requires: string[];
+}
+
+export interface FundPromptOverview {
+  base: string;
+  kinds: FundPromptTemplate[];
+  /** canAnalyze=能不能出分析建议（现在只有唯一模型）；canSettle=能不能写账本 */
+  sources: Array<{ source: string; label: string; canSettle: boolean; canAnalyze?: boolean }>;
 }
 
 /** 投资总览：额度按「净投入」口径算，不随行情涨跌漂移 */
@@ -401,7 +510,8 @@ export interface EvalSimulation {
   summary: FundEquitySummary | null;
 }
 
-export interface EvalPickCandidate {
+/** 层 ③：一次决策里的一方（AI 建议或我的操作） */
+export interface EvalMySide {
   source: string;
   sourceLabel: string;
   action: FundAction;
@@ -411,36 +521,52 @@ export interface EvalPickCandidate {
   profit: number | null;
 }
 
-/** 层 ③：同一天同一只基金，人挑的那条 vs 没挑的那几条 */
-export interface EvalDecision {
+/** 层 ③：同一天同一只基金，AI 建议 vs 我的实际操作 */
+export interface EvalMyDecision {
   code: string;
   name: string;
   tradeDate: string;
-  window: string;
+  /** 实际用到的前瞻窗口；null = 还没走到任何窗口 */
+  window: string | null;
   windowLabel: string;
   fundFwdPct: number | null;
-  chosen: EvalPickCandidate;
-  bestScorePct: number | null;
-  bestSources: string[];
-  otherMeanPct: number | null;
-  /** 每元口径：不管金额，纯比判断 */
-  pickValuePct: number;
-  /** 金额口径：按各自建议金额折算成元 */
-  pickValueYuan: number;
-  rank: number;
-  participants: number;
-  wasBest: boolean;
-  rejected: EvalPickCandidate[];
+  /** same 照做 / changed 我改主意 / none 该动没动 */
+  status: 'same' | 'changed' | 'none';
+  model: EvalMySide;
+  mine: EvalMySide;
+  /** 我方得分 − AI 得分（百分点）；正数说明我改得更好 */
+  deltaPct: number | null;
+  deltaYuan: number | null;
 }
 
-export interface EvalUndecided {
-  code: string;
-  name: string;
-  tradeDate: string;
-  window: string;
-  windowLabel: string;
-  fundFwdPct: number | null;
-  candidates: EvalPickCandidate[];
+export interface EvalMySideStats {
+  count: number;
+  avgScorePct: number | null;
+  winRate: number | null;
+  totalProfit: number;
+}
+
+export interface EvalMyVsModel {
+  model: string;
+  modelLabel: string;
+  windowNote: string;
+  primary: string;
+  count: number;
+  evaluated: number;
+  same: number;
+  changed: number;
+  noAction: number;
+  deviations: number;
+  insufficient: boolean;
+  minSamples: number;
+  agreeRate: number | null;
+  avgDeltaPct: number | null;
+  totalDeltaYuan: number;
+  better: number;
+  worse: number;
+  modelStats: EvalMySideStats;
+  mineStats: EvalMySideStats;
+  decisions: EvalMyDecision[];
 }
 
 export interface FundEvaluation {
@@ -448,6 +574,9 @@ export interface FundEvaluation {
   primary: string;
   minSamples: number;
   windows: { key: string; days: number; label: string }[];
+  /** 当前唯一的分析模型；null 表示还处在多来源模式 */
+  model: string | null;
+  modelLabel: string | null;
   notes: string[];
   scorecard: {
     rows: EvalRow[];
@@ -460,6 +589,8 @@ export interface FundEvaluation {
     primary: string;
     primaryInsufficient: boolean;
     minSamples: number;
+    model: string | null;
+    modelLabel: string | null;
     span: { from: string; to: string; days: number } | null;
     bySource: EvalGroup[];
     byFund: EvalGroup[];
@@ -482,33 +613,11 @@ export interface FundEvaluation {
   >;
   syncNote: string;
   baselineKey: string;
-  picks: {
-    windowNote: string;
-    primary: string;
-    count: number;
-    insufficient: boolean;
-    minSamples: number;
-    bestRate: number | null;
-    avgPickValuePct: number | null;
-    avgPickValueYuan: number | null;
-    totalPickValueYuan: number;
-    positive: number;
-    negative: number;
-    decisions: EvalDecision[];
-    undecided: EvalUndecided[];
-    bySource: {
-      source: string;
-      sourceLabel: string;
-      chosen: number;
-      bestCount: number;
-      worstCount: number;
-      bestRate: number | null;
-      avgPickValuePct: number | null;
-      avgPickValueYuan: number | null;
-      totalPickValueYuan: number;
-    }[];
-  };
+  /** 层 ③：我的操作 vs AI 建议 */
+  myVsModel: EvalMyVsModel | null;
   actualSummary: FundEquitySummary | null;
+  /** 真实组合曲线点位：与 simulations 共用同一条时间轴 */
+  actualPoints: FundEquityPoint[];
   isolation: {
     feedbackAllowed: boolean;
     allowed: string[];
@@ -532,6 +641,8 @@ export interface FundOverview {
   config: FundConfig | null;
   sources: FundSourceInfo[];
   sourceLabels: Record<string, string>;
+  /** 唯一分析模型；null = 多来源模式 */
+  model: { source: string; label: string } | null;
   /** 允许写账本的来源；非空时其他来源只能出建议 */
   settleSources: string[];
   /** 服务端统一抓的盘中估值快照，code -> quote */

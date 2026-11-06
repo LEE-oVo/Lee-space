@@ -59,8 +59,8 @@ export function FundDetailModal({
   const labelOf = (s: string) => sourceLabels?.[s] || FALLBACK_SOURCE_LABEL[s] || s;
   const [series, setSeries] = useState<FundNavPoint[] | null>(null);
   const [history, setHistory] = useState<FundAdvice[] | null>(null);
-  // 记录区必须能看到同一天所有工具的候选，才能选择采纳哪条——
-  // 所以不受页面当前来源筛选的影响，始终拉全部来源
+  // 记录区始终拉全部（服务端已收敛为「唯一模型 + 手动补记」）：
+  // 同一天可能既有 AI 建议、也有我自己改主意的补记，要能对照着看
   const histSource = 'all';
   const [error, setError] = useState('');
   const [recording, setRecording] = useState(false);
@@ -104,8 +104,8 @@ export function FundDetailModal({
     return { added, reduced, count };
   }, [history]);
 
-  // 记录按天分组：同一天可能有多个工具各给一条建议，但只有被采纳的那条
-  // 是「我当天做的事」，其余收起为一行候选，避免把建议当成已发生的操作
+  // 记录按天分组：同一天通常只有一条 AI 建议；我改主意时会有第二条补记。
+  // 只有被采纳的那条是「我当天做的事」，其余收起为一行候选，避免把建议当成已发生的操作
   const dayGroups = useMemo(() => {
     const m = new Map<string, FundAdvice[]>();
     for (const h of history || []) {
@@ -327,7 +327,13 @@ export function FundDetailModal({
                     <td className="muted" style={{ width: 96 }}>持有份额</td>
                     <td className="mono">{position?.shares ?? holding.shares ?? '—'}</td>
                     <td className="muted" style={{ width: 96 }}>成本价</td>
-                    <td className="mono">{position?.cost ?? cost ?? '—'}</td>
+                    <td className="mono">
+                      {position?.cost != null
+                        ? Number(position.cost).toFixed(4)
+                        : cost != null
+                          ? Number(cost).toFixed(4)
+                          : '—'}
+                    </td>
                   </tr>
                   <tr>
                     <td className="muted">持仓市值</td>
@@ -361,8 +367,14 @@ export function FundDetailModal({
                     </td>
                   </tr>
                   <tr>
-                    <td className="muted">买入批次</td>
-                    <td className="mono">{position?.lots ?? '—'}</td>
+                    <td className="muted">可 0 费卖出</td>
+                    <td className="mono">
+                      {position?.sellPlan && position.sellPlan.feeFreeAmount > 0 ? (
+                        <span className="up">¥{position.sellPlan.feeFreeAmount.toFixed(2)}</span>
+                      ) : (
+                        <span className="faint">—</span>
+                      )}
+                    </td>
                     <td className="muted">净值日期</td>
                     <td className="mono">{position?.navDate || '—'}</td>
                   </tr>
@@ -374,6 +386,151 @@ export function FundDetailModal({
                   )}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {position?.lotList && position.lotList.length > 0 && (
+            <div className="fund-detail-block">
+              <div
+                className="row wrap"
+                style={{ justifyContent: 'space-between', gap: 8, marginBottom: 8 }}
+              >
+                <div style={{ fontWeight: 500 }}>持仓批次</div>
+                <span className="faint" style={{ fontSize: 12 }}>
+                  卖出按此顺序消耗，从上往下
+                </span>
+              </div>
+
+              {position.sellPlan?.base && (
+                <div
+                  style={{
+                    background: 'var(--c-bg)',
+                    border: '1px solid var(--c-border)',
+                    borderRadius: 8,
+                    padding: '10px 12px',
+                    marginBottom: 10,
+                    fontSize: 12.5,
+                    lineHeight: 1.7,
+                  }}
+                >
+                  <div style={{ fontWeight: 500, marginBottom: 2 }}>
+                    原始底仓
+                    <span className="faint" style={{ fontWeight: 400, marginLeft: 6 }}>
+                      半年累积，非单次买入
+                    </span>
+                  </div>
+                  <div className="faint">
+                    {position.sellPlan.base.shares.toFixed(2)} 份 · 累计投入 ¥
+                    {position.sellPlan.base.costAmount.toFixed(2)} · 加权成本价{' '}
+                    {position.sellPlan.base.unitCost.toFixed(4)}
+                  </div>
+                  <div className="faint">
+                    {position.sellPlan.base.feeExempt ? (
+                      <>
+                        这部分卖出<span className="up"> 不扣赎回费</span>，可卖 ¥
+                        {(position.sellPlan.base.shares * (position.sellPlan.nav || 0)).toFixed(2)}
+                      </>
+                    ) : (
+                      '用户已填真实建仓日，费率按持有天数计算'
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {position.swingBasis && position.swingBasis.lots.length > 0 && (
+                <div
+                  style={{
+                    background: 'var(--c-bg)',
+                    border: '1px solid var(--c-border)',
+                    borderRadius: 8,
+                    padding: '10px 12px',
+                    marginBottom: 10,
+                    fontSize: 12.5,
+                    lineHeight: 1.7,
+                  }}
+                  title="波段是逐批判断的：每个加仓批次单独算浮盈，达标的合计后与 0 费额度取小"
+                >
+                  <div style={{ fontWeight: 500, marginBottom: 2 }}>
+                    波段判断
+                    <span className="faint" style={{ fontWeight: 400, marginLeft: 6 }}>
+                      {position.swingBasis.lots.length} 个加仓批次 · 止盈线{' '}
+                      {position.swingBasis.targetPct}% · 现价 {position.swingBasis.price.toFixed(4)}（
+                      {position.swingBasis.priceSource === 'estimate' ? '盘中估值' : '最近净值'}）
+                    </span>
+                  </div>
+                  {position.swingBasis.qualifiedCount > 0 ? (
+                    <div>
+                      <span className="up">{position.swingBasis.qualifiedCount} 个达标</span>
+                      ，合计 ¥{position.swingBasis.candidateAmount.toFixed(2)} → 建议卖出{' '}
+                      <span style={{ fontWeight: 500 }}>
+                        ¥{position.swingBasis.suggestedAmount.toLocaleString('zh-CN')}
+                      </span>
+                      {position.swingBasis.cappedBy === 'feeFree' && (
+                        <span className="faint">
+                          {' '}
+                          （受 0 费额度 ¥{position.swingBasis.feeFreeAmount?.toFixed(0)} 限制）
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="faint">暂无达标批次，今天不做波段</div>
+                  )}
+                  <div className="faint">
+                    {position.swingBasis.lots
+                      .map((l) => `${l.buyDate.slice(5)} ${pctText(l.gainPct)}`)
+                      .join(' · ')}
+                  </div>
+                </div>
+              )}
+
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>买入日</th>
+                    <th>单位成本</th>
+                    <th>剩余份额</th>
+                    <th>成本金额</th>
+                    <th>持有天数</th>
+                    <th>赎回费率</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {position.lotList.map((l, i) => (
+                    <tr key={`${l.kind}-${l.buyDate ?? 'base'}-${l.unitCost}-${i}`}>
+                      <td className="mono">
+                        {l.kind === 'base' ? (
+                          <span className="faint" title="原始底仓为半年累积，没有单一买入日">
+                            原始底仓
+                          </span>
+                        ) : (
+                          l.buyDate
+                        )}
+                      </td>
+                      <td className="mono">{l.unitCost.toFixed(4)}</td>
+                      <td className="mono">{l.shares.toFixed(2)}</td>
+                      <td className="mono">¥{l.costAmount.toFixed(2)}</td>
+                      <td className="mono">
+                        {l.daysHeld == null ? <span className="faint">—</span> : l.daysHeld}
+                      </td>
+                      <td className="mono">
+                        {l.feeExempt ? (
+                          <span className="faint">0（豁免）</span>
+                        ) : (
+                          <span className={l.feePct > 0 ? 'down' : 'faint'}>
+                            {l.feePct > 0 ? `${l.feePct}%` : '0'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {position.sellPlan && (
+                <div className="faint" style={{ fontSize: 12, marginTop: 6 }}>
+                  {position.sellPlan.note}
+                </div>
+              )}
             </div>
           )}
 
@@ -438,7 +595,7 @@ export function FundDetailModal({
               </div>
             )}
             <div className="faint" style={{ fontSize: 12, marginTop: 8, lineHeight: 1.7 }}>
-              同一天可能有多个工具/模型各给一条建议，但只能采纳其中一个——
+              同一天可能既有 AI 建议、也有我自己的补记，但只能采纳其中一个——
               被采纳的那条就是我当天真实做的操作，账本与统计只认它，其余仅作对照。
               定时任务读取的也是这份「我做过什么」，不含任何来源信息。
             </div>

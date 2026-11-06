@@ -1,8 +1,8 @@
 import { getDb } from '../db/index.js';
 import { config } from '../config.js';
-import { parseFeeRules, investmentSummary, holdingAgeInfo } from './position.js';
+import { parseFeeRules, investmentSummary, holdingAgeInfo, holdingView } from './position.js';
 import { getFundConfig } from './fundConfig.js';
-import { FUND_SOURCES, SOURCE_LABELS, normalizeSource, sourceRank } from './fundSource.js';
+import { FUND_SOURCES, SOURCE_LABELS, FUND_MODEL, normalizeSource, sourceRank, activeSourceFilter, isActiveSource } from './fundSource.js';
 import { readQuotes, quoteForAutomation } from './quote.js';
 import { computeTechnicals, describeTechnicals } from './technicals.js';
 
@@ -319,6 +319,9 @@ export function holdingsForAutomation(limit = 12, opts = {}) {
     const quote = quoteForAutomation(h.code, opts.quotes);
     const tech = computeTechnicals(series, quote?.fresh ? quote.estimate : null);
     const invested = Number(h.amount) || 0;
+    // 把估值传进去：holdingView 会优先用它算「波段可卖多少」，
+    // 页面（/wb-api/funds）和这里因此是同一个口径、同一个价。
+    const pos = holdingView(h.code, quote);
     return {
       ...h,
       // 净值序列：服务端累积的真实净值，模型不要再自己去拉行情接口。
@@ -332,6 +335,15 @@ export function holdingsForAutomation(limit = 12, opts = {}) {
       sharePct: netInvested > 0 ? round1(invested / netInvested * 100) : null,
       // 减仓成本：最早批次还要多久降档、现在卖扣多少
       holding: holdingAgeInfo(h.code, today),
+      // 批次明细（FIFO 顺序）：recent 只有系统上线后的操作，
+      // 导入底仓压根不在里面，模型看 recent 会以为「只买过一次却有几千份」。
+      // lotList 才是账本真相，第 0 条就是这次卖出实际会消耗的批次
+      lotList: pos?.lotList || [],
+      // 0 费卖出额度：卖出金额的上限依据，别再拿总成本瞎猜
+      sellPlan: pos?.sellPlan || null,
+      // 今天能卖哪一部分：逐个加仓批次判断浮盈，达标的合计再和 0 费额度取小。
+      // ⚠️ 千万不要拿 lotList[0] 算浮盈——那是底仓，成本常年高于现价，条件永远不成立
+      swingBasis: pos?.swingBasis || null,
       // 只下发我真实做过的操作（天然一天一条）。**不带 source**：
       // 模型只需要知道「哪天对哪只基金做了什么、多少钱」，
       // 至于是哪个工具建议的与它的判断无关，给了反而会让它去纠结来源。
@@ -343,6 +355,8 @@ export function holdingsForAutomation(limit = 12, opts = {}) {
           action: r.action,
           amount: r.amount,
           nav: r.settledNav ?? r.nav ?? null,
+          // 成交份额：和 lotList 对得上，模型才能把「这笔操作」映射到「哪一批」
+          shares: r.settledShares ?? null,
         })),
       // 本来源自己的历史建议（最近 5 天）：让模型知道自己昨天说了什么，
       // 避免「今天加、明天减、后天又加」的反复横跳。只给自己的，不给别人的
@@ -491,10 +505,14 @@ export function positionSummary(code) {
 /**
  * 最新建议。
  * 传 source → 只要该来源的（每只基金一条）；
- * 不传 → 返回「每只基金 × 每个来源」各自的最新一条，供页面做来源对比。
+ * 不传 → 返回「每只基金 × 每个生效来源」各自的最新一条。
+ * 单一模型模式下生效来源只有「那个模型 + manual」，历史工具不会出现在这里。
  */
 export function latestAdvice(source) {
   const db = getDb();
+  // 单一模型模式下，旧来源即使被显式点名也不返回——历史只在库里，不进页面
+  if (source && source !== 'all' && !isActiveSource(source)) return [];
+  const active = activeSourceFilter();
   if (source && source !== 'all') {
     return db
       .prepare(
@@ -511,31 +529,36 @@ export function latestAdvice(source) {
     .prepare(
       `SELECT a.* FROM fund_advice a
          JOIN (SELECT code, IFNULL(source,'workbuddy') AS s, MAX(id) AS mid FROM fund_advice
+                ${active.sql ? `WHERE ${active.sql}` : ''}
                 GROUP BY code, s) m
            ON a.id = m.mid
         ORDER BY a.trade_date DESC, a.updated_at DESC`
     )
-    .all()
+    .all(...active.args)
     .map(mapAdvice);
 }
 
 /**
  * 页面上会出现哪些来源入口。
- * 取「已配置令牌的来源」∪「库里实际写过的来源」——
- * 前者保证某个工具今天没跑也能在 tab 上看到它（日期空白/落后即提示），
- * 而不是悄悄消失；后者保住历史来源与手动补记。manual 不主动占位，
- * 它只在真有补记记录时出现（它不是一条分析途径）
+ * 取「生效来源」∪「库里实际写过且仍生效的来源」——
+ * 单一模型模式下只剩「模型 + manual」，历史工具不再占位。
+ * manual 只在真有补记记录时出现（它不是一条分析途径）。
  */
 export function adviceSources() {
+  const active = activeSourceFilter();
   const rows = getDb()
     .prepare(
       `SELECT IFNULL(source,'workbuddy') AS source, COUNT(*) AS n, MAX(trade_date) AS last
-         FROM fund_advice GROUP BY source`
+         FROM fund_advice
+        ${active.sql ? `WHERE ${active.sql}` : ''}
+        GROUP BY source`
     )
-    .all();
+    .all(...active.args);
   const bySource = new Map(rows.map((r) => [r.source, r]));
+  // 只把「还活着的来源」补进列表：单一模型模式下不再给旧工具留空位
   for (const s of FUND_SOURCES) {
     if (s === 'manual') continue;
+    if (!isActiveSource(s)) continue;
     if (!bySource.has(s)) bySource.set(s, { source: s, n: 0, last: null });
   }
   return [...bySource.values()]
@@ -554,25 +577,38 @@ export function adviceSources() {
 export function adviceHistory(code, limit = 10, source) {
   const db = getDb();
   const cap = Math.min(Math.max(Number(limit) || 10, 1), 60);
-  const rows = source && source !== 'all'
-    ? db
-        .prepare(
-          `SELECT * FROM fund_advice WHERE code = ? AND IFNULL(source,'workbuddy') = ?
-            ORDER BY trade_date DESC LIMIT ?`
-        )
-        .all(code, source, cap)
-    : db
-        .prepare(`SELECT * FROM fund_advice WHERE code = ? ORDER BY trade_date DESC, id DESC LIMIT ?`)
-        .all(code, cap);
+  const active = activeSourceFilter();
+  if (source && source !== 'all') {
+    if (!isActiveSource(source)) return [];
+    return db
+      .prepare(
+        `SELECT * FROM fund_advice WHERE code = ? AND IFNULL(source,'workbuddy') = ?
+          ORDER BY trade_date DESC LIMIT ?`
+      )
+      .all(code, source, cap)
+      .map(mapAdvice);
+  }
+  const rows = db
+    .prepare(
+      `SELECT * FROM fund_advice WHERE code = ?
+        ${active.sql ? `AND ${active.sql}` : ''}
+        ORDER BY trade_date DESC, id DESC LIMIT ?`
+    )
+    .all(code, ...active.args, cap);
   return rows.map(mapAdvice);
+}
+
+function defaultSource() {
+  return FUND_MODEL || 'workbuddy';
 }
 
 function mapDaily(row) {
   if (!row) return null;
+  const s = row.source || defaultSource();
   return {
     tradeDate: row.trade_date,
-    source: row.source || 'workbuddy',
-    sourceLabel: SOURCE_LABELS[row.source || 'workbuddy'] || row.source || 'workbuddy',
+    source: s,
+    sourceLabel: SOURCE_LABELS[s] || s,
     summary: row.summary || '',
     market: row.market || '',
     model: row.model || null,
@@ -583,6 +619,8 @@ function mapDaily(row) {
 /** 最新一天的整体结论；传 source 时只取该来源的 */
 export function latestDaily(source) {
   const db = getDb();
+  if (source && source !== 'all' && !isActiveSource(source)) return null;
+  const active = activeSourceFilter();
   const row = source && source !== 'all'
     ? db
         .prepare(
@@ -590,22 +628,31 @@ export function latestDaily(source) {
             ORDER BY trade_date DESC LIMIT 1`
         )
         .get(source)
-    : db.prepare(`SELECT * FROM fund_daily ORDER BY trade_date DESC, updated_at DESC LIMIT 1`).get();
+    : db
+        .prepare(
+          `SELECT * FROM fund_daily
+            ${active.sql ? `WHERE ${active.sql}` : ''}
+            ORDER BY trade_date DESC, updated_at DESC LIMIT 1`
+        )
+        .get(...active.args);
   return mapDaily(row);
 }
 
-/** 每个来源各自最新一天的整体结论，供页面按来源切换 */
+/** 每个来源各自最新一天的整体结论。单一模型模式下只会剩一条 */
 export function latestDailyList() {
   const db = getDb();
+  const active = activeSourceFilter();
   const rows = db
     .prepare(
       `SELECT d.* FROM fund_daily d
          JOIN (SELECT IFNULL(source,'workbuddy') AS s, MAX(trade_date) AS md
-                 FROM fund_daily GROUP BY s) m
+                 FROM fund_daily
+                ${active.sql ? `WHERE ${active.sql}` : ''}
+                GROUP BY s) m
            ON d.trade_date = m.md AND IFNULL(d.source,'workbuddy') = m.s
         ORDER BY d.trade_date DESC, d.updated_at DESC`
     )
-    .all();
+    .all(...active.args);
   return rows.map(mapDaily);
 }
 
@@ -811,6 +858,13 @@ export function ingestAdvice(payload, options = {}) {
           : []
       ),
       stale: raw?.stale ? 1 : 0,
+      // 卖出意图：swing=波段止盈 / risk=降风险 / rebalance=再平衡。
+      // 只在 reduce/sell 时有意义；不是这三个值就当没写，不因为它的脏值整批拒绝
+      intent: ['swing', 'risk', 'rebalance'].includes(String(raw?.intent || '').trim())
+        ? String(raw.intent).trim()
+        : null,
+      // 波段计划回补价：卖出后我打算在这个价位买回，复盘时用它判断波段成没成
+      buyBackPrice: parseNum(raw?.buyBackPrice),
       model: raw?.model ? String(raw.model).slice(0, 80) : (payload?.model ? String(payload.model).slice(0, 80) : null),
       source,
     });
@@ -880,20 +934,32 @@ export function ingestAdvice(payload, options = {}) {
     quoteFilled.push(row.code);
   }
 
+  // stale 的语义必须干净：标了 stale 就不该再带估算值。
+  // 历史上有 22 条是「estimate 置空了、estimatePct 还留着」——模型只改了一半。
+  // 页面会把那个百分比染色显示出去，看着像「没有估值却知道涨跌」，自相矛盾。
+  // 这里统一归一，不再指望模型每次都写对。
+  for (const row of writable) {
+    if (!row.stale) continue;
+    row.estimate = null;
+    row.estimatePct = null;
+  }
+
   const upsert = db.prepare(
     `INSERT INTO fund_advice
        (code, trade_date, source, action, confidence, amount, nav, nav_date, estimate, estimate_pct, nav_pct,
-        summary, reason, risks, sources, stale, model, created_at, updated_at)
+        summary, reason, risks, sources, stale, intent, buy_back_price, model, created_at, updated_at)
      VALUES
        (@code, @tradeDate, @source, @action, @confidence, @amount, @nav, @navDate, @estimate, @estimatePct, @navPct,
-        @summary, @reason, @risks, @sources, @stale, @model, @now, @now)
+        @summary, @reason, @risks, @sources, @stale, @intent, @buyBackPrice, @model, @now, @now)
      ON CONFLICT(code, trade_date, source) DO UPDATE SET
        action = excluded.action, confidence = excluded.confidence, amount = excluded.amount,
        nav = excluded.nav,
        nav_date = excluded.nav_date, estimate = excluded.estimate,
        estimate_pct = excluded.estimate_pct, nav_pct = excluded.nav_pct,
        summary = excluded.summary, reason = excluded.reason, risks = excluded.risks,
-       sources = excluded.sources, stale = excluded.stale, model = excluded.model,
+       sources = excluded.sources, stale = excluded.stale,
+       intent = excluded.intent, buy_back_price = excluded.buy_back_price,
+       model = excluded.model,
        updated_at = excluded.updated_at`
   );
 

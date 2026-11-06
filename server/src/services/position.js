@@ -1,5 +1,6 @@
 import { getDb } from '../db/index.js';
 import { sourceRank } from './fundSource.js';
+import { getCurveStartDate, getFundConfig } from './fundConfig.js';
 
 // 持仓结算：把「已执行的操作」用真实收盘净值换算成份额与费用。
 // 管理费/托管费/销售服务费已经每日从净值里计提，这里不重复计算，
@@ -47,6 +48,16 @@ function dayDiff(fromDate, toDate) {
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+/** 净值/成本价要 4 位，2 位会把 1.4451 和 1.4452 抹成同一个数 */
+function round4(n) {
+  return Math.round((Number(n) || 0) * 10000) / 10000;
+}
+
+/** 服务端统一按北京时间取当天日期，别用 UTC，跨日会差一天 */
+function todayInShanghai() {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
 }
 
 export function navOn(code, date) {
@@ -489,8 +500,12 @@ function syncCost(code) {
  * 例如一路加仓会让「累计收益率」显得很小，那不是亏了，只是分母变大了。
  * 最大回撤按 TWR 算才有意义，否则一次加仓就能把回撤抹平。
  */
-export function equityCurve() {
+export function equityCurve(opts = {}) {
   const db = getDb();
+  // 起点之前的净值只属于基金自己，不属于这个组合——
+  // 底仓的 buy_date 是 MIN(nav_date) 兜底出来的假日期，从那里画起会把
+  // 建仓前就存在的浮亏记成「这段行情跌的」。截断到真正开始记录的那天。
+  const from = opts.from === undefined ? getCurveStartDate() : opts.from;
   const lots = db
     .prepare(`SELECT code, buy_date, amount, shares, source FROM fund_lots ORDER BY buy_date, id`)
     .all();
@@ -511,8 +526,12 @@ export function equityCurve() {
     navMap.get(r.code).set(r.nav_date, r.nav);
     dateSet.add(r.nav_date);
   }
-  const dates = [...dateSet].sort();
-  if (dates.length === 0) return { points: [], events: [], summary: null };
+  const allDates = [...dateSet].sort();
+  if (allDates.length === 0) return { points: [], events: [], summary: null, from: null };
+  // 第一个纳入的日期上，底仓会一次性灌进来，flowValue 与 market 相等 → 当日涨跌为 0，
+  // 所以 TWR 从 0% 起算，而「累计收益率」照样是真实的 -12.9%。
+  const dates = from ? allDates.filter((d) => d >= from) : allDates;
+  if (dates.length === 0) return { points: [], events: [], summary: null, from: from || null };
 
   const shares = new Map();
   const cost = new Map();
@@ -612,9 +631,11 @@ export function equityCurve() {
   for (const s of sells) push(s.trade_date, 'reduce', Number(s.settled_amount) || 0, s.code);
   const events = [...eventMap.values()]
     .map((e) => ({ ...e, codes: [...e.codes] }))
+    // 起点之前的「建仓」标记没有意义：那段不在图里，标上去只会挂在最左边误导人
+    .filter((e) => !from || e.date >= from)
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  return { points, events, summary: curveSummary(points) };
+  return { points, events, summary: curveSummary(points), from: from || null };
 }
 
 /** 曲线的区间统计：最值、回撤、最好/最差的一天 */
@@ -778,8 +799,15 @@ export function investmentSummary(cfg, today = null, opts = {}) {
   };
 }
 
-/** 持仓视图：批次汇总 + 市值/盈亏，供页面与定时任务使用 */
-export function holdingView(code) {
+/**
+ * 持仓视图：批次汇总 + 市值/盈亏，供页面与定时任务使用。
+ *
+ * @param code 基金代码
+ * @param quote 可选，服务端统一抓的盘中估值。传了就优先用它算「波段可卖多少」，
+ *              页面和模型才会看到同一个数；市值与浮动盈亏仍按**已公布净值**算，
+ *              因为那是真金白银的账，不能被估算值污染。
+ */
+export function holdingView(code, quote = null) {
   const holding = getHolding(code);
   if (!holding) return null;
   // 从没结算过的持仓还没有批次，先补一个初始批次，否则页面会显示成 0 份
@@ -791,6 +819,12 @@ export function holdingView(code) {
   const nav = latest?.nav || null;
   const market = nav && agg.shares ? round2(agg.shares * nav) : null;
   const unrealized = market !== null ? round2(market - agg.costAmount) : null;
+  const today = todayInShanghai();
+  // 波段判断用哪个价：有新鲜盘中估值就用它（模型和页面统一），否则退回最近净值
+  const livePx = quote?.fresh && Number(quote.estimate) > 0 ? Number(quote.estimate) : null;
+  const px = livePx ?? nav;
+  // 先算额度：波段的可卖金额要跟它取小，两个字段必须用同一个价算出来
+  const plan = sellPlan(code, px, today, holding);
   return {
     code,
     name: holding.name,
@@ -808,7 +842,13 @@ export function holdingView(code) {
     purchaseFee: holding.purchase_fee || 0,
     redemptionFee: parseFeeRules(holding.redemption_fee),
     feeSource: holding.fee_source || '',
+    // lots 是批次数（老字段，页面早就在用），lotList 才是明细
     lots: agg.lots,
+    lotList: lotDetail(code, today, holding),
+    // 能 0 费卖多少：波段交易的金额上限就靠它，别再让模型拿总成本瞎猜
+    sellPlan: plan,
+    // 今天能卖哪一部分：逐个加仓批次判断浮盈，达标的合计，再和 0 费额度取小
+    swingBasis: swingBasis(code, px, holding, plan ? plan.feeFreeAmount : null, livePx ? 'estimate' : 'nav'),
   };
 }
 
@@ -828,7 +868,9 @@ export function curveForAutomation(limit = 20) {
   return {
     from: tail[0].date,
     to: tail[tail.length - 1].date,
-    days: s.days ?? curve.points.length,
+    // 这里的天数必须是**这条切片**的长度。曾经取 summary 的全量天数，
+    // 于是模型看到「days: 98，但只有 20 个点、日期从 9-17 起」，自相矛盾
+    days: tail.length,
     points: tail.map((p) => ({
       date: p.date,
       returnPct: p.returnPct,
@@ -874,6 +916,245 @@ export function holdingAgeInfo(code, today, holding = null) {
     currentFeePct: feeRateFor(rules, minHoldDays),
     daysToNextTier: next === null ? null : next - minHoldDays,
     nextTierFeePct: next === null ? null : feeRateFor(rules, next),
+  };
+}
+
+/**
+ * 批次明细，按 FIFO 顺序返回——卖出就是这个顺序。
+ *
+ * 两类批次必须区别对待：
+ *
+ *   base（source='import'）——**原始底仓**
+ *     它是用户前半年反复投入累积的结果，根本不存在「某一天一次性买入」。
+ *     所以没有可信的买入日，也没有单一单位净值，只有两个真实信息：
+ *     总成本（amount）与总份额（shares），相除得到的成本价是加权平均。
+ *
+ *     按用户约定，这部分卖出**一律不扣赎回费**：持有期远超所有档位。
+ *     这里直接给 feePct=0，而不是拿一个兜底出来的假日期去套费率表——
+ *     假日期（净值序列起点）一旦因为补数据变到近期，整批底仓就会被
+ *     误判成 1.5%，那笔「手续费吃掉收益」就是这么来的。
+ *
+ *   buy（按建议买入的批次）
+ *     日期与成交净值都是真实的，照常按持有天数套档位。
+ *
+ * 注意：底仓在 FIFO 队列里永远排最前（它的 buy_date 是最早的），
+ * 所以卖出时它是最先被消耗的那一批，也是「0 费额度」的主体。
+ */
+export function lotDetail(code, today = null, holding = null) {
+  const h = holding || getHolding(code);
+  if (!h) return [];
+  const t = today || todayInShanghai();
+  const rules = parseFeeRules(h.redemption_fee);
+  const firstBuy = String(h.first_buy_date || '').trim();
+  return lotsOf(code)
+    .filter((l) => Number(l.remain) > 0.000001)
+    .map((l) => {
+      const isBase = String(l.source || '') === 'import';
+      // 用户若明确填了 first_buy_date，说明他知道真实建仓日，那就照实算；
+      // 没填就按底仓豁免处理（半年累积，不可能还在收费档）
+      const exempt = isBase && !firstBuy;
+      const days = dayDiff(l.buy_date, t);
+      return {
+        kind: isBase ? 'base' : 'buy',
+        // 底仓没有可信买入日，宁可不给，也不给一个看起来像真的假日期
+        buyDate: isBase ? null : l.buy_date,
+        dateKnown: !isBase,
+        unitCost: round4(l.unit_cost),
+        shares: round2(l.remain),
+        costAmount: round2(Number(l.remain) * Number(l.unit_cost)),
+        daysHeld: isBase ? null : days,
+        feePct: exempt ? 0 : feeRateFor(rules, days),
+        feeExempt: exempt,
+        source: l.source || null,
+      };
+    });
+}
+
+/**
+ * 0 费卖出额度：这次能卖多少钱不花手续费。
+ *
+ * 卖出按 FIFO 从队首消耗，所以「能 0 费卖多少」= 队首连续 0 费批次之和。
+ * 队首一旦是收费档，这个数就是 0——那就别建议卖，或者明说要付多少。
+ *
+ * segments 把 FIFO 队列按费率切成段，让模型看到
+ * 「卖到 X 元为止还免费，再多就要扣 Y%」，而不是只知道一个总数。
+ */
+export function sellPlan(code, nav, today = null, holding = null) {
+  const h = holding || getHolding(code);
+  if (!h) return null;
+  const t = today || todayInShanghai();
+  const lots = lotDetail(code, t, h);
+  if (!lots.length) return null;
+  const px = Number(nav);
+  if (!Number.isFinite(px) || px <= 0) return null;
+
+  let freeShares = 0;
+  for (const l of lots) {
+    if (l.feePct > 0) break;
+    freeShares += l.shares;
+  }
+
+  const segments = [];
+  for (const l of lots) {
+    const last = segments[segments.length - 1];
+    if (last && last.feePct === l.feePct) last.shares = round2(last.shares + l.shares);
+    else segments.push({ feePct: l.feePct, shares: l.shares });
+  }
+  let run = 0;
+  for (const s of segments) {
+    run = round2(run + s.shares);
+    s.uptoShares = run;
+    s.uptoAmount = round2(run * px);
+  }
+
+  const baseLots = lots.filter((l) => l.kind === 'base');
+  const baseShares = round2(baseLots.reduce((s, l) => s + l.shares, 0));
+  const baseCost = round2(baseLots.reduce((s, l) => s + l.costAmount, 0));
+
+  let note;
+  if (!freeShares) {
+    note = '队首批次仍在收费档，当前卖出任何金额都要扣赎回费';
+  } else if (baseShares && freeShares <= baseShares + 0.005) {
+    note = `原始底仓 ${baseShares} 份（成本价 ${round4(baseCost / baseShares)}）卖出 0 费，`
+      + `可卖 ¥${round2(freeShares * px)}；再往后进入下一档费率`;
+  } else if (baseShares) {
+    // 0 费区间超过底仓，说明中间还有几个已经熬过 7 天的加仓批次，一并算进来
+    note = `原始底仓 ${baseShares} 份，加已过费档的加仓批次，合计可 0 费卖 `
+      + `¥${round2(freeShares * px)}；再往后进入下一档费率`;
+  } else {
+    note = `前 ¥${round2(freeShares * px)} 卖出 0 费，再往后进入下一档费率`;
+  }
+
+  return {
+    nav: round4(px),
+    totalShares: round2(lots.reduce((s, l) => s + l.shares, 0)),
+    feeFreeShares: round2(freeShares),
+    feeFreeAmount: round2(freeShares * px),
+    // 底仓单独给一份：页面要把它当作「历史累积仓位」展示，不是一次买入
+    base: baseShares > 0
+      ? {
+          shares: baseShares,
+          costAmount: baseCost,
+          unitCost: round4(baseCost / baseShares),
+          feeExempt: baseLots.every((l) => l.feeExempt),
+        }
+      : null,
+    segments,
+    note,
+  };
+}
+
+/** 止盈线兜底值：库里没配时用它。真正的值由 settings 的 `fund.swingTargetPct` 决定 */
+const SWING_TARGET_DEFAULT_PCT = 3;
+/**
+ * 估值噪声余量：实测平均绝对误差 0.27%，留 0.3pp。
+ * 触发线 = 止盈线 − 余量，避免模型在 2.9%/3.1% 之间反复改口。
+ */
+const SWING_NOISE_BUFFER_PCT = 0.3;
+
+/** 止盈线与触发线都由配置算出，页面改完立刻生效（不做缓存） */
+function swingThresholds() {
+  const raw = Number(getFundConfig().swingTargetPct);
+  const target = Number.isFinite(raw) && raw > 0 ? raw : SWING_TARGET_DEFAULT_PCT;
+  // 触发线不能是负数，也不能高于目标线
+  const trigger = Math.max(0, Math.round((target - SWING_NOISE_BUFFER_PCT) * 100) / 100);
+  return { target, trigger };
+}
+
+/**
+ * 波段参考 —— 判断「今天能卖哪一部分」，**和算费用的是两回事**。
+ *
+ * 踩过两次坑，都记在这里：
+ *
+ * ① 一开始让模型拿 `lotList[0].unitCost` 算浮盈。但 FIFO 队首**永远是原始底仓**，
+ *    底仓是半年前高点建的，成本远高于现价（实测 -10% ~ -22%），
+ *    「浮盈 ≥3%」从设计上就永远不成立，波段一次也触发不了。
+ *
+ * ② 改成「只看最近一次加仓」也还是不对。波段是**逐批独立**的：
+ *    每一次加仓都是一个独立的小仓位，各自赚没赚到 3% 要分开算。
+ *    今天可能只有 10-15 那批到了 3%，10-21 那批还没到 —— 那就只卖达标的那部分。
+ *
+ * 所以现在的口径：
+ *   逐个加仓批次算 gainPct → 挑出 `qualifies` 的 → 金额合计 `candidateAmount`
+ *   → 和 0 费额度取小 → `sellableAmount`（就是今天该报的卖出金额）
+ *
+ * 而 `lotList[0]` 只负责回答另一个问题：这笔卖出去扣几成费。
+ */
+export function swingBasis(code, price, holding = null, feeFreeAmount = null, priceSource = 'nav') {
+  const h = holding || getHolding(code);
+  if (!h) return null;
+  const px = Number(price);
+  if (!Number.isFinite(px) || px <= 0) return null;
+  const { target, trigger } = swingThresholds();
+
+  // 只看系统上线后的加仓批次；底仓不参与波段判断（它是历史沉积，不是波段仓位）
+  const buys = lotsOf(code).filter(
+    (l) => Number(l.remain) > 0.000001 && String(l.source || '') !== 'import'
+  );
+
+  const lots = buys.map((l) => {
+    const cost = Number(l.unit_cost);
+    const shares = round2(l.remain);
+    const gainPct = cost > 0 ? round2((px / cost - 1) * 100) : null;
+    return {
+      buyDate: l.buy_date,
+      unitCost: round4(cost),
+      shares,
+      gainPct,
+      // 这一批按现价能卖多少钱
+      marketValue: round2(shares * px),
+      qualifies: gainPct != null && gainPct >= trigger,
+    };
+  });
+
+  const qualified = lots.filter((l) => l.qualifies);
+  const candidateAmount = round2(qualified.reduce((s, l) => s + l.marketValue, 0));
+  const candidateShares = round2(qualified.reduce((s, l) => s + l.shares, 0));
+
+  const free = feeFreeAmount == null ? null : round2(feeFreeAmount);
+  let sellableAmount = candidateAmount;
+  let cappedBy = qualified.length ? 'candidates' : null;
+  if (qualified.length && free != null && free < candidateAmount) {
+    sellableAmount = free;
+    cappedBy = 'feeFree';
+  }
+  // 金额必须整百，服务端直接砍好，省得模型再算一遍又算错
+  const suggestedAmount = Math.floor(sellableAmount / 100) * 100;
+
+  let note;
+  if (!lots.length) {
+    note = '还没有系统上线后的加仓批次，没有可做波段的仓位；底仓成本只影响卖出记账';
+  } else if (!qualified.length) {
+    const best = lots.reduce((m, l) => ((l.gainPct ?? -999) > (m.gainPct ?? -999) ? l : m));
+    note = `${lots.length} 个加仓批次都没到 ${target}%（最好的是 ${best.buyDate} @${best.unitCost}，`
+      + `现价 ${best.gainPct}%），今天不做波段`;
+  } else if (cappedBy === 'feeFree') {
+    note = `${qualified.length} 个批次达标，合计 ¥${candidateAmount}，`
+      + `但 0 费额度只有 ¥${free}，只能卖 ¥${sellableAmount}；剩下的等额度恢复（或下个交易日）再卖`;
+  } else {
+    note = `${qualified.length} 个批次达标，合计 ¥${candidateAmount}，0 费额度够，可以全卖`;
+  }
+
+  return {
+    price: round4(px),
+    /** 这个价是哪来的：estimate=盘中实时估值，nav=最近一期已公布净值 */
+    priceSource,
+    targetPct: target,
+    triggerPct: trigger,
+    /** 逐个加仓批次，FIFO 之外的另一个维度：谁赚到了 3% */
+    lots,
+    qualifiedCount: qualified.length,
+    qualifiedShares: candidateShares,
+    /** 达标批次按现价合计能卖多少钱 */
+    candidateAmount,
+    /** 实际可卖金额（已和 0 费额度取小） */
+    sellableAmount,
+    /** 再砍成整百，模型直接用这个数报 amount */
+    suggestedAmount,
+    /** candidates=受限于达标金额；feeFree=受限于 0 费额度；null=没有达标批次 */
+    cappedBy,
+    feeFreeAmount: free,
+    note,
   };
 }
 

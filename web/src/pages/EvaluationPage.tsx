@@ -1,18 +1,18 @@
 /**
  * 决策复盘页（原「事后评估」）。
  *
- * 为什么叫复盘不叫评估：页面上跑的不是一个分数，而是三条互不相干的复盘线——
- * 模型自己跟行情对答案、假设全听某一家会怎样、你每天那一票挑得值多少。
+ * 页面上跑的不是一个分数，而是两条互不相干的复盘线：
+ * AI 自己跟行情对答案、我的实际操作比 AI 好还是差。
  * 「评估」听着像在给模型打总分，容易把它当成排行榜用；
  * 「复盘」才对得上这里实际在做的事。
  *
  * 从基金页里分出来的原因不只是「内容多」：它和基金页要回答的问题完全相反——
- * 基金页是「今天该怎么做」，这里是「过去那些建议到底准不准」。
+ * 基金页是「今天该怎么做」，这里是「过去那些建议到底准不准、我做得怎么样」。
  * 混在一页里会把「实时判断」和「事后复盘」两种心态挤在一起，
  * 而且它是全量重算，挂在基金页上会白白多占一次请求。
  *
- * 权限：要求 fund:detail 且非游客。②模拟组合、③挑选增值含跨来源横向比较
- * 与用户本人的取舍，这些数一旦被模型看到，评分本身就会失真。
+ * 权限：要求 fund:detail 且非游客。②含我本人的取舍与真实收益，
+ * 这些数一旦被模型看到，复盘本身就会失真。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -73,7 +73,7 @@ export function EvaluationPage() {
             <div style={{ fontWeight: 500 }}>没有决策复盘的访问权限</div>
           </div>
           <p className="muted" style={{ fontSize: 13, margin: '0 0 12px' }}>
-            这里要对照三条组合曲线与你的采纳取舍，包含持仓金额和跨来源横向排名，
+            这里要对照 AI 建议与我的实际操作，包含持仓金额和我自己的取舍，
             需要 <span className="mono">fund:detail</span> 权限，游客不开放。
           </p>
           <Link className="btn" to="/funds">返回基金行情</Link>
@@ -101,8 +101,7 @@ export function EvaluationPage() {
           <div className="eval-page-title">决策复盘</div>
           <div className="faint">
             每条建议都按自己的未来净值单独打分，采纳与否不进公式
-          </div>
-        </div>
+          </div>        </div>
         <div className="row" style={{ gap: 8 }}>
           <Link className="btn ghost sm" to="/funds">
             <Icon name="chart" size={14} />

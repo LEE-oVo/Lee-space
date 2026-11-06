@@ -36,29 +36,9 @@ const ACTION_ACTIVE: Record<FundAction, boolean> = {
   sell: true,
 };
 
-// 入账优先级，必须与服务端 FUND_SETTLE_PRIORITY 保持一致：
-// 「合并」视图里用同一套规则挑出主建议，否则页面显示的和真正入账的会不是同一条
-// 入账优先级：同一天多来源并存时，账本认排在最前的那条（与服务端 FUND_SETTLE_PRIORITY 一致）
-const SOURCE_PRIORITY: Record<string, number> = { manual: 0, trae: 1, workbuddy: 2 };
-
-// 页面主展示顺序：主工具优先，定期跑的对照模型次之，手动触发的 Trae 最后。
-// 与上面刻意分开——一个管「账本认哪条」，一个管「给谁看」。
-// Trae 退为手动兜底后不该占主位，否则它停更几天、或同一天给出另一套判断时，
-// 页面主位显示的就不是主工具的结论。
-// 新接入的模型（glm 等）只要服务端配了令牌就会自动出现在这里，
-// 没显式配置的来源排最后（?? 9），不会挤掉已知来源的顺序
-const DISPLAY_RANK: Record<string, number> = { manual: 0, workbuddy: 1, glm: 2, trae: 3 };
-
-function sourceRank(source: string) {
-  return SOURCE_PRIORITY[source] ?? 9;
-}
-
-/** 判断方向：加仓 in / 减仓 out / 持有 flat。方向不同才算「分歧」 */
-function directionOf(action: FundAction) {
-  if (action === 'buy' || action === 'add') return 'in';
-  if (action === 'hold') return 'flat';
-  return 'out';
-}
+// 2026-11-06 起只保留一个分析模型：页面不再有来源切换、冲突对比、入账优先级。
+// 历史 WorkBuddy / Trae 建议仍留在库里，由服务端过滤，前端拿不到也就不会画出来。
+const MANUAL_RANK: Record<string, number> = { manual: 0 };
 
 function pctText(value: number | null | undefined) {
   if (value === null || value === undefined) return '—';
@@ -98,7 +78,6 @@ interface DetailTarget {
   holding: FundHolding | null;
   advice: FundAdvice | undefined;
   position: FundPosition | undefined;
-  source: string;
 }
 
 export function FundsPage() {
@@ -124,12 +103,6 @@ export function FundsPage() {
   const lastLoadAt = useRef(0);
   const [detail, setDetail] = useState<DetailTarget | null>(null);
   const [expandSummary, setExpandSummary] = useState(false);
-  // 默认看主工具的判断；Trae 只在我想额外对照时才切过去。
-  // 若 WorkBuddy 恰好没有数据（例如刚接入），加载后会自动回退到合并视图
-  const [source, setSource] = useState<string>('workbuddy');
-  // 用户是否手动切过来源。切过就尊重他的选择：新接入的来源还没数据时也要留在那儿，
-  // 页面有「还没有投过建议」的空态；只有初次加载才做回退，避免一进来就是空白页
-  const userPicked = useRef(false);
 
   const load = useCallback(async () => {
     lastLoadAt.current = Date.now();
@@ -139,12 +112,6 @@ export function FundsPage() {
       setData(d);
       setPositions(d.positions || {});
       setError('');
-      // 默认来源在该来源还没数据时回退，避免一进来就是空白页
-      const has = (s: string) => (d.advice || []).some((a) => (a.source || 'workbuddy') === s);
-      setSource((cur) => {
-        if (userPicked.current) return cur;
-        return has('workbuddy') ? 'workbuddy' : 'all';
-      });
       const codes = Array.from(
         new Set([...d.holdings.map((h) => h.code), ...d.advice.map((a) => a.code)])
       );
@@ -234,47 +201,23 @@ export function FundsPage() {
 
   const sourceLabels: Record<string, string> = data.sourceLabels || {};
   const labelOf = (s: string) => sourceLabels[s] || s;
-  // 只有一个来源时不显示切换器，页面跟以前完全一样。
-  // 顺序固定为「主工具 → 其他来源 → 合并」：主视图就在最左边，
-  // 每个 tab 带自己最新建议的日期，一眼能看出哪个来源没跟上
-  const latestDate = (data.sources || []).reduce<string | null>(
-    (m, s) => (!m || (s.lastDate && s.lastDate > m) ? s.lastDate || m : m),
-    null
-  );
-  // 它今天没跑也能占住位置（日期显示「暂无」），不会悄悄消失
-  const sourceTabs = (data.sources || []).length > 1
-    ? [
-        ...(data.sources || [])
-          .slice()
-          .sort((a, b) => (DISPLAY_RANK[a.source] ?? 9) - (DISPLAY_RANK[b.source] ?? 9))
-          .map((s) => ({ source: s.source, label: s.label, lastDate: s.lastDate })),
-        { source: 'all', label: '合并', lastDate: latestDate },
-      ]
-    : [];
-  // 切了来源但那个来源还没数据时的兜底：退回合并视图的口径，不留空白页
-  const settleNote = (data.settleSources || []).length === 1
-    ? `账本仅 ${labelOf(data.settleSources[0])} 可写`
-    : '';
+  // 唯一分析模型的名字：页面只在页头标一次，不再有来源切换器
+  const modelLabel = data.model?.label || '';
 
-  // 按来源过滤后按基金分组，「合并」视图下每只基金可能有多条（各来源一条）
+  // 按基金分组。服务端已经只下发「唯一模型 + 手动补记」，同一天最多两条：
+  // 一条是 AI 建议，一条是我自己的补记（只有我改主意时才会有）
   const grouped = new Map<string, FundAdvice[]>();
   for (const a of data.advice || []) {
-    // 已采纳的那条即使不属于当前来源也要留下——它是我当天的实际操作，
-    // 在任何视图下都该看得见，否则切到 WorkBuddy 就看不到自己采纳了什么
-    if (source !== 'all' && a.source !== source && !a.executed) continue;
     const list = grouped.get(a.code) || [];
     list.push(a);
     grouped.set(a.code, list);
   }
   for (const list of grouped.values()) {
-    // 展示顺序：日期新的在前；同一天优先主工具（手动补记 > WorkBuddy > Trae）。
-    // 注意和入账优先级 sourceRank(manual > trae > workbuddy) 是两回事——
-    // 那是决定账本认哪条，这是决定页面主展示哪条。Trae 退为对照后不该压过主工具，
-    // 否则它停更几天、或同一天给出另一套判断时，页面主位显示的就不是主工具的结论
+    // 日期新的在前；同一天优先我的手动的补记——那才是我实际做的事
     list.sort((x, y) => {
       const byDate = String(y.tradeDate || '').localeCompare(String(x.tradeDate || ''));
       if (byDate !== 0) return byDate;
-      return (DISPLAY_RANK[x.source] ?? 9) - (DISPLAY_RANK[y.source] ?? 9);
+      return (MANUAL_RANK[x.source] ?? 9) - (MANUAL_RANK[y.source] ?? 9);
     });
   }
   const allOf = (code: string) => grouped.get(code) || [];
@@ -282,14 +225,11 @@ export function FundsPage() {
   const knownCodes = new Set(data.holdings.map((h) => h.code));
   const extras = [...grouped.keys()].filter((c) => !knownCodes.has(c));
 
-  const dailies = data.dailyBySource || [];
-  const activeDaily = source === 'all'
-    ? data.daily
-    : dailies.find((d) => d.source === source) || data.daily;
+  const activeDaily = data.daily;
 
   function renderCard(code: string, holding: FundHolding | null, index: number) {
     const all = allOf(code);
-    // 当天已采纳的那条优先展示：它就是我实际做的操作，比任何候选建议都重要。
+    // 已经采纳/执行的那条优先展示：它就是我实际做的操作，比任何候选建议都重要。
     // 采纳是互斥的（一天最多一条），所以这里最多命中一条
     const adopted = all.find((a) => a.executed) || null;
     const advice = adopted || all[0];
@@ -306,25 +246,6 @@ export function FundsPage() {
     // 涨跌按净值序列自己算，别把建议日的涨跌幅套到别的日期上
     const navPct = navChangeOf(pts)
       ?? (latestNavDate && advice && latestNavDate === advice.navDate ? advice.navPct : null);
-    // 只有同一天的两条建议方向相反才算真冲突。
-    // 跨日期的方向不同不代表两个工具吵起来了，多半只是另一个来源没跑
-    const sameDayOthers = advice
-      ? all.filter((a) => a.source !== advice.source && a.tradeDate === advice.tradeDate)
-      : [];
-    // 已经做出选择之后就不再提示分歧——那只会让人怀疑自己选错了
-    const conflict = Boolean(advice)
-      && !adopted
-      && sameDayOthers.length > 0
-      && new Set([advice, ...sameDayOthers].map((a) => directionOf(a.action))).size > 1;
-    // 真正入账的那条按入账优先级算，未必是页面主展示的这条——
-    // 两个顺序现在是分开的，这里必须按账本口径说，不能说错
-    const settleWinner = advice
-      ? [advice, ...sameDayOthers].reduce((m, a) => (sourceRank(a.source) < sourceRank(m.source) ? a : m))
-      : null;
-    // 日期更早的其他来源：保留入口但说清楚是哪天的，别让人当成今天的判断
-    const olderOthers = advice
-      ? all.filter((a) => a.source !== advice.source && a.tradeDate < advice.tradeDate)
-      : [];
     // 建议标了 stale，但后来真实净值补上了（结算入库）→ 不算延迟
     const staleNow = Boolean(advice?.stale)
       && !(latestNavDate && advice?.tradeDate && latestNavDate >= advice.tradeDate);
@@ -393,11 +314,10 @@ export function FundsPage() {
                 已入账
               </span>
             )}
-            {/* 建议不是主工具给的、或在合并视图下 → 标出来源与日期。
-                单来源且是 WorkBuddy 时不显示，避免多余噪音 */}
-            {advice && sourceTabs.length > 0 && (source === 'all' || advice.source !== 'workbuddy') && (
-              <span className="fund-src-badge" data-source={advice.source}>
-                {labelOf(advice.source)} {advice.tradeDate.slice(5)}
+            {/* 只有手动补记才需要标出来：它代表我当天改了自己的主意，不是 AI 的建议 */}
+            {advice && advice.source === 'manual' && (
+              <span className="fund-src-badge" data-source="manual">
+                {labelOf('manual')} {advice.tradeDate.slice(5)}
               </span>
             )}
           </div>
@@ -457,8 +377,13 @@ export function FundsPage() {
         {canDetail && pos && (
           <div className="fund-position-line">
             <span>份额 {pos.shares}</span>
-            <span>成本 {pos.cost ?? '—'}</span>
+            <span>成本 {pos.cost != null ? Number(pos.cost).toFixed(4) : '—'}</span>
             <span>市值 ¥{pos.market ?? '—'}</span>
+            {pos.sellPlan && pos.sellPlan.feeFreeAmount > 0 && (
+              <span title="按 FIFO 顺序，卖出这个金额以内不扣赎回费">
+                可 0 费卖 <span className="up">¥{pos.sellPlan.feeFreeAmount.toFixed(0)}</span>
+              </span>
+            )}
             {pos.realized !== 0 && (
               <span>
                 已实现{' '}
@@ -468,44 +393,6 @@ export function FundsPage() {
                 </span>
               </span>
             )}
-          </div>
-        )}
-
-        {conflict && advice && (
-          <div className="fund-conflict">
-            <span className="fund-conflict-icon">
-              <Icon name="alert" size={12} />
-            </span>
-            <div className="fund-conflict-body">
-              <div className="fund-conflict-title">
-                {advice.tradeDate.slice(5)} 两只工具判断不一致
-              </div>
-              <div className="fund-conflict-rows">
-                {[advice, ...sameDayOthers].map((a) => (
-                  <div className="fund-conflict-row" key={a.source}>
-                    <span className="fund-src-badge" data-source={a.source}>{labelOf(a.source)}</span>
-                    <span className={`fund-conflict-act ${directionOf(a.action)}`}>
-                      {ACTION_LABEL[a.action]}
-                      {a.amount ? ` ¥${a.amount.toLocaleString('zh-CN')}` : ''}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <div className="fund-conflict-foot">
-                {settleWinner
-                  ? `入账时只认${labelOf(settleWinner.source)}的这条——账本只有一本，不会两只都算`
-                  : '账本只有一本，不会两只都算'}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 其他来源停在更早的日期：只是没跟上，不是分歧，用更轻的提示 */}
-        {!conflict && olderOthers.length > 0 && advice && (
-          <div className="fund-older-note">
-            <Icon name="clock" size={11} />
-            另有 {olderOthers.map((a) => `${labelOf(a.source)} ${a.tradeDate.slice(5)}`).join('、')}
-            的判断（早于 {advice.tradeDate.slice(5)}），切换来源可查看
           </div>
         )}
 
@@ -521,7 +408,7 @@ export function FundsPage() {
           <button
             className="btn sm fund-detail-btn"
             onClick={() =>
-              setDetail({ code, name, holding, advice, position: positions[code], source })
+              setDetail({ code, name, holding, advice, position: positions[code] })
             }
           >
             <Icon name="chart" size={13} />
@@ -548,6 +435,12 @@ export function FundsPage() {
               <Icon name="chart" size={15} />
             </span>
             <span style={{ fontWeight: 500 }}>基金行情与操作建议</span>
+            {modelLabel && (
+              <span className="fund-tag is-done" title="工作台现在只保留这一个分析模型">
+                <Icon name="check" size={11} />
+                {modelLabel}
+              </span>
+            )}
             {data.daily?.tradeDate && (
               <span className="fund-live">
                 <span className="dot live" />
@@ -662,7 +555,7 @@ export function FundsPage() {
             <div className="eval-entry-text">
               <div className="eval-entry-title">决策复盘</div>
               <div className="faint">
-                每条建议按自己的未来净值单独打分，看看哪家的判断更准、你挑的那条值多少
+                {modelLabel || 'AI'} 的每条建议按自己的未来净值单独打分，再看你的实际操作比它好还是差
               </div>
             </div>
             <Link className="btn ghost sm" to="/funds/evaluation">
@@ -672,49 +565,12 @@ export function FundsPage() {
           </div>
         )}
 
-        {sourceTabs.length > 0 && (
-          <div className="fund-source-tabs" role="tablist" aria-label="建议来源">
-            {sourceTabs.map((t) => (
-              <button
-                key={t.source}
-                role="tab"
-                aria-selected={source === t.source}
-                className={`fund-source-tab${source === t.source ? ' is-on' : ''}`}
-                onClick={() => { userPicked.current = true; setSource(t.source); }}
-                title={t.lastDate ? `最新建议日期 ${t.lastDate}` : '这个来源还没有投过建议'}
-              >
-                {t.label}
-                {t.lastDate ? (
-                  <span
-                    className={`fund-tab-date${latestDate && t.lastDate < latestDate ? ' is-old' : ''}`}
-                  >
-                    {t.lastDate.slice(5)}
-                  </span>
-                ) : (
-                  <span className="fund-tab-date is-old">暂无</span>
-                )}
-              </button>
-            ))}
-            {/* 有来源落后时点破：那个日期不是最新的，别拿它当当前判断 */}
-            {(() => {
-              const notes = [];
-              if (settleNote) notes.push(settleNote);
-              if (latestDate && sourceTabs.some((t) => t.lastDate && t.lastDate < latestDate)) {
-                notes.push('灰色日期＝该来源最近一次分析的时间');
-              }
-              return notes.length > 0
-                ? <span className="fund-source-note">{notes.join(' · ')}</span>
-                : null;
-            })()}
-          </div>
-        )}
-
         {activeDaily?.summary ? (
           <>
             <div className={`fund-market${expandSummary ? '' : ' clamp'}`}>{activeDaily.summary}</div>
             <div className="row" style={{ justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
               <span className="faint" style={{ fontSize: 12 }}>
-                {sourceTabs.length > 0 ? `${labelOf(activeDaily.source || 'workbuddy')} · ` : ''}
+                {modelLabel ? `${modelLabel} · ` : ''}
                 由定时任务调用大模型生成 · {formatRelative(activeDaily.updatedAt)}
               </span>
               <button className="btn ghost sm" onClick={() => setExpandSummary((v) => !v)}>
@@ -724,16 +580,10 @@ export function FundsPage() {
           </>
         ) : (
           <div className="fund-empty">
-            {source === 'all'
-              ? '还没有分析数据。定时任务会在'
-              : `${labelOf(source)} 还没有投过建议。它自己的定时任务跑完后这里就会出现，`}
-            {source === 'all' && (
-              <>
-                <b>工作日 14:30</b> 自动运行，
-                抓取行情后由大模型给出操作建议并推送到工作台。
-              </>
-            )}
-            {canManage && source === 'all' && ' 也可以先到「持仓配置」录入你的基金。'}
+            还没有分析数据。{modelLabel || 'AI'} 的定时任务会在
+            <b> 工作日 14:30 </b>
+            自动运行，抓取行情后给出操作建议并推送到工作台。
+            {canManage && ' 也可以先到「持仓配置」录入你的基金。'}
           </div>
         )}
       </div>

@@ -19,8 +19,10 @@ import { getDb } from '../db/index.js';
  */
 
 const FETCH_TIMEOUT_MS = 8000;
-// 超过这个时间没刷新的就不给模型用——隔夜数据冒充盘中比没有更糟
-const FRESH_WINDOW_MS = 15 * 60 * 1000;
+// 超过这个时间没刷新的就不给模型用——隔夜数据冒充盘中比没有更糟。
+// 5 分钟刷一轮，窗口收到 8 分钟 = 只容忍「漏掉 1 次」。
+// 之前是 15 分钟，能容忍连挂 2 次，那意味着模型可能拿着 10~15 分钟前的价当现价用。
+const FRESH_WINDOW_MS = 8 * 60 * 1000;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36';
 
 /**
@@ -29,11 +31,16 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/
  *
  * symbol 前缀：沪市 sh（51xxxx / 56xxxx / 58xxxx 的 ETF，以及上交所发布的中证指数），深市 sz。
  * 新增基金时在这里加一行即可；已经写进库里的自定义配置优先。
+ *
+ * ⚠️ **优先用 ETF 市价，不要用指数**：
+ * 联接基金真正持有的是 ETF 份额，ETF 的市价变化才是它的直接驱动。
+ * 指数是「理论净值」，不含 ETF 的溢价折价；拿指数折算出来的估值，
+ * 误差里会多一块永远无法消除的折溢价漂移。指数只作为 ETF 拿不到时的兜底。
  */
 const PRESET_SOURCES = {
   '016708': [
-    { symbol: 'sh000811', beta: 0.950, label: '细分有色指数' },
     { symbol: 'sh516650', beta: 0.949, label: '有色金属ETF华夏' },
+    { symbol: 'sh000811', beta: 0.950, label: '细分有色指数' },
   ],
   '020406': [
     { symbol: 'sh561360', beta: 0.882, label: '石油ETF国泰' },
@@ -43,8 +50,8 @@ const PRESET_SOURCES = {
     { symbol: 'sz159326', beta: 0.905, label: '电网设备ETF华夏' },
   ],
   '020274': [
-    { symbol: 'sh000813', beta: 0.970, label: '细分化工指数' },
     { symbol: 'sz159082', beta: 0.933, label: '化工ETF华夏' },
+    { symbol: 'sh000813', beta: 0.970, label: '细分化工指数' },
   ],
 };
 
@@ -304,9 +311,14 @@ export async function refreshQuotes(opts = {}) {
 export function readQuotes() {
   const db = getDb();
   const nowMs = Date.now();
+  // 行情是不是还在动：午休与收盘后报价是**冻结**的。
+  // 只比「抓取时间差」会把僵住的价当成实时价——11:35 读到 11:28 的数据只差 7 分钟，
+  // 但那个价直到 13:00 都不会再动，判成 fresh 就是骗模型。
+  const sessionOpen = isTrading(new Date(nowMs));
   const out = {};
   for (const r of db.prepare(`SELECT * FROM fund_quote`).all()) {
     const asOfMs = Number(r.as_of || 0) * 1000;
+    const ageSec = asOfMs ? Math.round((nowMs - asOfMs) / 1000) : null;
     out[r.code] = {
       estimate: r.estimate,
       estimatePct: r.estimate_pct,
@@ -319,8 +331,10 @@ export function readQuotes() {
       beta: r.beta,
       trading: Boolean(r.trading),
       asOf: Number(r.as_of || 0),
-      // 超过刷新窗口就不算「实时」，模型应退回用 nav 判断并把 stale 标 true
-      fresh: asOfMs > 0 && nowMs - asOfMs <= FRESH_WINDOW_MS,
+      ageSec,
+      sessionOpen,
+      // 交易时段 AND 8 分钟内抓的，才算「实时」
+      fresh: sessionOpen && asOfMs > 0 && nowMs - asOfMs <= FRESH_WINDOW_MS,
     };
   }
   return out;
@@ -347,9 +361,13 @@ export function quoteForAutomation(code, quotes = readQuotes()) {
     method: q.method,
     beta: q.beta,
     asOf: q.asOf,
+    ageSec: q.ageSec,
+    sessionOpen: q.sessionOpen,
     fresh: q.fresh,
     note: q.fresh
       ? `服务端统一抓取的盘中估值（${q.proxy || q.method}），可直接采用`
-      : '服务端当前没有新鲜盘中估值，请用上面 nav / navDate 的净值做判断并把 stale 标 true',
+      : q.sessionOpen
+        ? `盘中估值已过期（${q.ageSec} 秒前抓的），请用上面 nav / navDate 的净值判断并把 stale 标 true`
+        : '当前不在交易时段（午休或收盘后），行情已冻结；请用上面 nav / navDate 判断并把 stale 标 true',
   };
 }

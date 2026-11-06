@@ -78,6 +78,33 @@ function parseSourceLabels() {
   return labels;
 }
 
+// 只保留一个分析模型（2026-11-06 起）。
+//
+// 设了 FUND_MODEL 之后：
+//   - 页面、复盘、下发给模型的历史都只看这一个来源（+ manual 我自己的补记）；
+//   - /ingest 只接受这个来源，其他工具的旧令牌再跑也写不进建议；
+//   - 历史记录**不删**，只是不再进入任何计算与展示。
+// 令牌与结算白名单保持不变——收盘结算还是原来那个任务，不跟着模型一起换。
+//
+// 不设 FUND_MODEL 时行为与以前完全一致（多来源并存），本地排查仍可用。
+function resolveFundModel(tokens) {
+  const explicit = String(process.env.FUND_MODEL || '').trim().toLowerCase();
+  if (explicit) return explicit;
+  // 只配了一个令牌时，它就是唯一模型；多令牌必须显式指定，避免猜错
+  const names = Object.keys(tokens);
+  return names.length === 1 ? names[0] : '';
+}
+
+// 令牌表只解析一次：模型解析、/ingest 门禁、提示词渲染都读同一份
+const ingestTokens = parseIngestTokens();
+const fundModel = resolveFundModel(ingestTokens);
+// 允许写「分析建议」的来源。留空 = 跟随 fundModel（也即只有这一个模型能写）；
+// 没配 fundModel 时留空 = 不限制，保持旧行为
+const analysisSources = String(process.env.FUND_ANALYSIS_SOURCES || '')
+  .split(',')
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+
 export const config = {
   port: Number(process.env.PORT || 3001),
   dbPath: process.env.DB_PATH || '/opt/workbench/data/workbench.db',
@@ -118,11 +145,21 @@ export const config = {
   fundMinAddAmount: Number(process.env.FUND_MIN_ADD || 10),
   // 单只基金占总投资额的上限（百分比）。0 = 不限制
   fundMaxWeightPct: Number(process.env.FUND_MAX_WEIGHT_PCT || 35),
+  // 对外访问地址：提示词里的 curl 示例要用它。绑域名后只改这里（或换 env），
+  // 不用再去三份提示词里逐个替换 IP
+  fundPublicBase: String(process.env.FUND_PUBLIC_BASE || 'http://47.119.128.59').replace(/\/+$/, ''),
+  // 波段止盈线（%）：某一次加仓的浮盈达到这个比例，就把那部分卖掉。
+  // 实际触发时会自动减去估值噪声余量（0.3pp），见 services/position.js
+  fundSwingTargetPct: Number(process.env.FUND_SWING_TARGET || 3),
   fileMaxMb: Number(process.env.FILE_MAX_MB || 20),
   fileQuotaMb: Number(process.env.FILE_QUOTA_MB || 2048),
   // 未配置任何令牌时 ingest 接口直接关闭（返回 503），避免开着无鉴权的写接口。
   // 加新分析工具 = 往这张表里多配一个令牌，代码不用改
-  fundIngestTokens: parseIngestTokens(),
+  fundIngestTokens: ingestTokens,
+  // 唯一分析模型（空 = 不做单一模型收敛，多来源并存）
+  fundModel,
+  // 允许写分析建议的来源（空 = 不限制）
+  fundAnalysisSources: analysisSources.length ? analysisSources : (fundModel ? [fundModel] : []),
   // 旧写法保留：rotate-fund-token.js 与历史脚本仍在用，值就是映射表里同名项
   fundIngestToken: process.env.FUND_INGEST_TOKEN || '',
   fundIngestTokenTrae: process.env.FUND_INGEST_TOKEN_TRAE || '',

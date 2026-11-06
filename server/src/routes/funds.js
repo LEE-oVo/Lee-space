@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requirePermission, denyGuest, requireFundIngest, requireFundSettle, clientIp, hasPermission } from '../middleware/auth.js';
+import { requirePermission, denyGuest, requireFundIngest, requireFundAnalysis, requireFundSettle, clientIp, hasPermission } from '../middleware/auth.js';
 import { writeAudit } from '../db/repo.js';
 import { config } from '../config.js';
 import { holdingView, pendingSettlements, settleDay, updateFees, investmentSummary, settlementAudit, equityCurve, curveForAutomation } from '../services/position.js';
@@ -30,6 +30,8 @@ import {
 } from '../services/funds.js';
 import { quoteForAutomation, readQuotes, refreshQuotes } from '../services/quote.js';
 import { evaluationReport } from '../services/evaluation.js';
+import { FUND_MODEL, FUND_MODEL_LABEL } from '../services/fundSource.js';
+import { renderPrompt, setTemplate, promptOverview, getTemplate } from '../services/fundPrompt.js';
 
 const router = Router();
 const CODE_RE = /^[A-Za-z0-9]{4,12}$/;
@@ -46,7 +48,7 @@ function amountRules(cfg = getFundConfig(), invest = null) {
       + '这是唯一硬约束，不是每日限额）；');
   }
   parts.push(daily > 0
-    ? `每日加仓上限 ${daily} 元，两个工具共用；`
+    ? `每日加仓上限 ${daily} 元，所有执行方共用；`
     : '不设每日加仓上限——钱要留到确定性高的机会上，不要被日限额摊平成定投；');
   const maxWeight = Number(cfg.maxWeightPct) || 0;
   if (maxWeight > 0) {
@@ -83,6 +85,8 @@ router.get('/', requirePermission('fund:view'), (req, res) => {
   // 不传 source：返回「每只基金 × 每个来源」各自的最新一条，页面自己做切换与冲突对比
   const advice = latestAdvice();
   const cfg = getFundConfig();
+  // 估值只读一次：positions 里的波段判断要用同一个快照，页面和模型才对得上
+  const quotes = readQuotes();
   res.json({
     daily: latestDaily(),
     // 每个来源各自的整体结论，页面切到哪个来源就显示哪份
@@ -91,7 +95,7 @@ router.get('/', requirePermission('fund:view'), (req, res) => {
     advice: detail ? advice : advice.map(publicAdvice),
     // 结算后的真实持仓：份额 / 成本 / 市值 / 浮动盈亏 / 已实现盈亏（含金额，仅 detail）
     positions: detail
-      ? Object.fromEntries(holdings.map((h) => [h.code, holdingView(h.code)]))
+      ? Object.fromEntries(holdings.map((h) => [h.code, holdingView(h.code, quotes[h.code])]))
       : {},
     // 总额度与目标收益：含金额，仅 detail
     investment: detail ? investmentSummary(cfg, todayStr()) : null,
@@ -99,9 +103,11 @@ router.get('/', requirePermission('fund:view'), (req, res) => {
     // 库里实际有哪些来源：只有一个来源时页面不显示切换器
     sources: adviceSources(),
     sourceLabels: SOURCE_LABELS,
+    // 唯一分析模型（null = 多来源模式）。页面用它标页头，不靠 sources[0] 猜
+    model: FUND_MODEL ? { source: FUND_MODEL, label: FUND_MODEL_LABEL } : null,
     // 服务端统一拉的盘中估值快照（不含金额，游客也能看）。
     // 页面优先用它，而不是建议里模型自己带的 estimate——大盘只有一个真相
-    quotes: readQuotes(),
+    quotes,
     settleSources: config.fundSettleSources,
     scope: detail ? 'full' : 'public',
   });
@@ -116,6 +122,8 @@ router.get('/equity', requirePermission('fund:detail'), denyGuest, (_req, res) =
     points: curve.points,
     events: curve.events,
     summary: curve.summary,
+    // 曲线起点：记录开始之前那段没有数据，不画。页面用它说明「从哪天起算」
+    from: curve.from,
     targetReturnPct: Number(cfg.targetReturnPct) || 0,
     totalBudget: Number(cfg.totalBudget) || 0,
   });
@@ -141,6 +149,8 @@ router.get('/evaluation', requirePermission('fund:detail'), denyGuest, (req, res
     source,
     limit: limit > 0 ? Math.min(limit, 500) : 0,
     actualSummary: actual.summary,
+    // 曲线点位也带上：页面上要把它和「全听某一家」画在同一张图里
+    actualPoints: actual.points,
   });
   res.json(report);
 });
@@ -159,6 +169,7 @@ router.patch('/config', requirePermission('fund:manage'), denyGuest, (req, res) 
       dailyAddBudget: req.body?.dailyAddBudget,
       minAddAmount: req.body?.minAddAmount,
       maxWeightPct: req.body?.maxWeightPct,
+      swingTargetPct: req.body?.swingTargetPct,
     },
     req.user?.id ?? null
   );
@@ -170,7 +181,8 @@ router.patch('/config', requirePermission('fund:manage'), denyGuest, (req, res) 
     username: req.user?.username ?? null,
     action: 'fund.config.update',
     target: 'fund',
-    detail: `总额 ${result.config.totalBudget} / 目标 ${result.config.targetReturnPct}% / 日限 ${result.config.dailyAddBudget || '不限'}`,
+    detail: `总额 ${result.config.totalBudget} / 目标 ${result.config.targetReturnPct}% / `
+      + `波段线 ${result.config.swingTargetPct}% / 日限 ${result.config.dailyAddBudget || '不限'}`,
     ip: clientIp(req),
   });
   return res.json({ ok: true, config: result.config, investment: investmentSummary(result.config, todayStr()) });
@@ -197,6 +209,50 @@ router.get('/history', requirePermission('fund:view'), (req, res) => {
 
 // 持仓列表：给定时任务读取用（用令牌而不是会话），这样新增基金不必改任务配置。
 // 附带每只基金最近的加减仓记录，让模型能看到自己过去的判断与实际执行情况。
+/**
+ * 提示词下发：所有执行方（WorkBuddy / 智谱 GLM / Trae）都从这里取全文，
+ * 本地定时任务只留一句「先取提示词再执行」，规则只维护一份。
+ *
+ * 用 ingest 令牌鉴权，**按令牌判定来源**——每个人只会拿到自己那一份渲染结果，
+ * 不会把别人的令牌渲染出去。
+ */
+router.get('/prompt', requireFundIngest, (req, res) => {
+  const kind = String(req.query.kind || 'analysis');
+  const text = renderPrompt(kind, req.fundSource);
+  if (text === null) {
+    return res.status(403).json({
+      error: `当前来源（${req.fundSource}）没有「${kind}」提示词的取用权限`,
+      hint: '分析提示词只发给唯一分析模型；结算提示词所有令牌都能取',
+    });
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  res.type('text/markdown; charset=utf-8').send(text);
+});
+
+/** 页面用：读模板原文（出厂默认 + 当前生效版本 + 各来源的令牌状态） */
+router.get('/prompt/template', requirePermission('fund:manage'), denyGuest, (_req, res) => {
+  res.json(promptOverview());
+});
+
+/** 页面用：保存模板。text 传空串 = 清除覆盖、恢复出厂默认 */
+router.put('/prompt/template', requirePermission('fund:manage'), denyGuest, (req, res) => {
+  const kind = String(req.body?.kind || '');
+  const text = String(req.body?.text ?? '');
+  const result = setTemplate(kind, text, req.user?.id ?? null);
+  if (!result.ok) {
+    return res.status(400).json({ ok: false, error: '保存失败', details: result.errors });
+  }
+  writeAudit({
+    userId: req.user?.id ?? null,
+    username: req.user?.username ?? null,
+    action: result.restored ? 'fund.prompt.reset' : 'fund.prompt.update',
+    target: `fund.prompt.${kind}`,
+    detail: result.restored ? '恢复出厂默认' : `长度 ${text.length}`,
+    ip: clientIp(req),
+  });
+  return res.json({ ok: true, restored: Boolean(result.restored), template: getTemplate(kind) });
+});
+
 router.get('/holdings', requireFundIngest, (req, res) => {
   const date = String(req.query.date || todayStr());
   const cfg = getFundConfig();
@@ -461,8 +517,9 @@ router.delete('/holdings/:id', requirePermission('fund:manage'), denyGuest, (req
 });
 
 // 定时任务写入：强校验，任何一条不合法整批拒绝。
-// 来源只认令牌——body 里就算带了 source 也一律忽略，避免提示词被改坏后串格子
-router.post('/ingest', requireFundIngest, (req, res) => {
+// 来源只认令牌——body 里就算带了 source 也一律忽略，避免提示词被改坏后串格子。
+// 再往上一层是「谁能写建议」的白名单：现在只有智谱 GLM，其他令牌只能结算。
+router.post('/ingest', requireFundIngest, requireFundAnalysis, (req, res) => {
   const result = ingestAdvice(req.body, { source: req.fundSource });
   if (!result.ok) {
     return res.status(400).json({ ok: false, error: '数据校验失败', details: result.errors });

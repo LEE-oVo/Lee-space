@@ -107,6 +107,20 @@ export function requireFundIngest(req, res, next) {
   return res.status(401).json({ error: '令牌无效' });
 }
 
+// 分析建议的写入白名单。与「结算白名单」分开：
+// 现在只让智谱 GLM 出建议，WorkBuddy / Trae 的令牌保留是为了收盘结算，
+// 它们再跑分析任务会在这一步被 403 拦下，不会往库里写一份看不见的旧判断。
+export function requireFundAnalysis(req, res, next) {
+  const allow = config.fundAnalysisSources || [];
+  if (allow.length && !allow.includes(req.fundSource)) {
+    return res.status(403).json({
+      error: `当前来源（${req.fundSource || '未知'}）只被允许结算，不能再写分析建议`,
+      allowedSources: allow,
+    });
+  }
+  next();
+}
+
 // 账本写入（结算）比写建议更危险：会真的改份额和成本。
 // 在令牌之外再加一层来源白名单，用于「角色分离」——
 // 例如 FUND_SETTLE_SOURCES=trae 时，WorkBuddy 的令牌只能投建议、动不了账本。

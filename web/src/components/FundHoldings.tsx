@@ -47,7 +47,7 @@ export function FundHoldings({ holdings, onChanged }: Props) {
       code: h.code,
       name: h.name,
       category: h.category || '',
-      cost: h.cost === null ? '' : String(h.cost),
+      cost: h.cost == null ? '' : Number(h.cost).toFixed(4),
       shares: h.shares === null ? '' : String(h.shares),
       amount: h.amount === null ? '' : String(h.amount),
       firstBuyDate: h.firstBuyDate || '',
@@ -260,7 +260,7 @@ export function FundHoldings({ holdings, onChanged }: Props) {
                   )}
                 </td>
                 <td>{h.category || '—'}</td>
-                <td className="mono">{h.cost ?? '—'}</td>
+                <td className="mono">{h.cost != null ? Number(h.cost).toFixed(4) : '—'}</td>
                 <td className="mono">{h.shares ?? '—'}</td>
                 <td className="mono">{h.amount ?? '—'}</td>
                 <td className="faint" style={{ fontSize: 11 }}>

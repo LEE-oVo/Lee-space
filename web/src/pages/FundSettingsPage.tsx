@@ -5,6 +5,7 @@ import { useAuth } from '../auth';
 import { Icon } from '../components/Icon';
 import { FundHoldings } from '../components/FundHoldings';
 import { FundInvestmentConfig } from '../components/FundInvestmentConfig';
+import { FundPromptEditor } from '../components/FundPromptEditor';
 import type { FundConfig, FundHolding, FundInvestment } from '../types';
 
 export function FundSettingsPage() {
@@ -52,6 +53,8 @@ export function FundSettingsPage() {
       {error && <div className="alert error">{error}</div>}
 
       <FundInvestmentConfig initial={invest} onChanged={load} />
+
+      <FundPromptEditor />
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 500, marginBottom: 6 }}>关于这个页面</div>

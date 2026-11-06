@@ -54,6 +54,7 @@ export function FundInvestmentConfig({ initial, onChanged }: Props) {
       config.totalBudget !== initial.config.totalBudget
       || config.targetReturnPct !== initial.config.targetReturnPct
       || config.dailyAddBudget !== initial.config.dailyAddBudget
+      || config.swingTargetPct !== initial.config.swingTargetPct
     );
   }, [config, initial]);
 
@@ -67,6 +68,7 @@ export function FundInvestmentConfig({ initial, onChanged }: Props) {
         totalBudget: config.totalBudget,
         targetReturnPct: config.targetReturnPct,
         dailyAddBudget: config.dailyAddBudget,
+        swingTargetPct: config.swingTargetPct,
       });
       setConfig(r.config);
       setInvestment(r.investment);
@@ -161,6 +163,24 @@ export function FundInvestmentConfig({ initial, onChanged }: Props) {
           />
           <span className="field-hint">
             达到后模型会转向止盈与减仓，不再建议继续加仓
+          </span>
+        </label>
+
+        <label className="field">
+          <span className="field-label">波段止盈线（%）</span>
+          <input
+            className="input mono"
+            type="number"
+            min={0.5}
+            max={50}
+            step={0.5}
+            value={num(config.swingTargetPct)}
+            onChange={(e) => setConfig({ ...config, swingTargetPct: Number(e.target.value) })}
+          />
+          <span className="field-hint">
+            单次加仓浮盈达到这个比例就卖掉那部分。实际触发减 0.3pp
+            （设 {num(config.swingTargetPct)}% → 浮盈{' '}
+            {Math.max(0, Number(num(config.swingTargetPct)) - 0.3).toFixed(1)}% 触发）
           </span>
         </label>
 

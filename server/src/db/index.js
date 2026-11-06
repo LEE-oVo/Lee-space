@@ -103,6 +103,9 @@ function ensureFundAdviceColumns(database) {
   addColumn(database, 'fund_advice', 'settled_realized', 'settled_realized REAL');
   addColumn(database, 'fund_advice', 'source', "source TEXT NOT NULL DEFAULT 'workbuddy'");
   addColumn(database, 'fund_advice', 'settled_source', 'settled_source TEXT');
+  // 波段交易：卖出意图 + 计划回补价。复盘时靠它把「波段」和「降风险」分开评估
+  addColumn(database, 'fund_advice', 'intent', 'intent TEXT');
+  addColumn(database, 'fund_advice', 'buy_back_price', 'buy_back_price REAL');
 
   // 唯一键从 (code, trade_date) 扩成 (code, trade_date, source)。
   // 老索引同名但定义不同，CREATE IF NOT EXISTS 会直接跳过，必须先 DROP 再建

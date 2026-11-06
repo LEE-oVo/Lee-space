@@ -1,27 +1,22 @@
 /**
  * 决策复盘的总览图。
  *
- * 页面上三层数据（模型成绩单 / 模拟组合 / 挑选增值）都是清单式的，
- * 打开就先看到一堆表格——但人第一眼想问的其实只有两句：
- *   1. 这几家里谁说得更准？（胜率）
- *   2. 照它们做，这段时间到底挣了还是亏了？（收益率与金额）
- * 所以把这两句各画成一张横向条形图钉在最上面，下面才是逐条的明细。
- *
- * 两张图的数据全部来自服务端已有的评估结果，这里只做挑选和画图：
- * 胜率取「机会成本口径」（持有记 0 分，全量可比），
- * 金额与收益率取层 ② 的模拟组合口径（剔除加减仓现金流，用 TWR）。
+ * 2026-11-06 起只保留一个分析模型，所以这里不再回答「谁说得更准」，
+ * 只回答两个问题：
+ *   1. AI 的建议到底押对没有？（胜率与金额）
+ *   2. 照它做 vs 我自己做，这段时间谁挣得多？（TWR 与盈亏）
+ * 两张图的数据全部来自服务端已有的评估结果，这里只做挑选和画图。
  */
 
-import type { FundEvaluation, EvalRow } from '../types';
+import type { FundEvaluation } from '../types';
 
 interface WinRow {
   key: string;
   label: string;
   /** 机会成本口径胜率：所有能看后市的建议都算，持有记 0 分 */
   winRate: number | null;
-  /** 方向口径胜率：只数真正下单的建议 */
-  betWinRate: number | null;
   count: number;
+  /** 其中真正下单（买/卖）的条数，只作说明 */
   betCount: number;
   /** 金额口径这段时间折算出来的盈亏（元） */
   profit: number | null;
@@ -89,51 +84,49 @@ function Bar({
 export function FundEvaluationOverview({ data }: { data: FundEvaluation }) {
   const primaryKey = data.primary;
   const windowLabel = data.windows.find((w) => w.key === primaryKey)?.label || primaryKey;
-  const allRows: EvalRow[] = data.scorecard.allRows?.length ? data.scorecard.allRows : data.scorecard.rows;
   const sampleCount = data.scorecard.windowSampleCounts?.[primaryKey] ?? 0;
+  const modelLabel = data.modelLabel || 'AI';
+  const mine = data.myVsModel;
 
-  /* ── 图一：胜率 ───────────────────────────────────────────── */
-  const winRows: WinRow[] = data.scorecard.bySource.map((g) => ({
-    key: g.source || g.key,
-    label: g.sourceLabel || g.source || g.key,
-    winRate: g.opportunity?.winRate ?? null,
-    betWinRate: g.directional?.winRate ?? null,
-    count: g.opportunity?.count ?? 0,
-    betCount: g.directional?.count ?? 0,
-    profit: g.money?.totalProfit ?? null,
-    insufficient: Boolean(g.opportunity?.insufficient),
-    tone: 'model' as const,
-  }));
-
-  // 「我的选择」= 这段时间里被采纳的那些建议，按同一套窗口与同一套口径算。
-  // 这是全场唯一一处按采纳与否切出来的子集，所以必须放在图上明说：
-  // 它衡量的是「我挑的那些」，不是「这家模型全部的建议」。
-  const mineRows = allRows.filter((r) => r.adopted && r.unit?.[primaryKey] != null);
-  const mineBets = mineRows.filter((r) => r.score?.[primaryKey] != null);
-  const mineProfit = allRows
-    .filter((r) => r.adopted && r.amount !== 0 && r.profit?.[primaryKey] != null)
-    .reduce((sum, r) => sum + (r.profit[primaryKey] as number), 0);
-  const mineWinRate = mineRows.length
-    ? round2((mineRows.filter((r) => (r.unit[primaryKey] as number) > 0).length / mineRows.length) * 100)
-    : null;
-  const mineBetWinRate = mineBets.length
-    ? round2((mineBets.filter((r) => (r.score[primaryKey] as number) > 0).length / mineBets.length) * 100)
-    : null;
-
-  if (mineRows.length) {
+  /* ── 图一：准不准 ───────────────────────────────────────────── */
+  const winRows: WinRow[] = [];
+  if (mine) {
+    // 用同一批决策做分母，AI 与我才是同题对照
+    winRows.push({
+      key: mine.model,
+      label: `${modelLabel} 的建议`,
+      winRate: mine.modelStats.winRate,
+      count: mine.modelStats.count,
+      betCount: mine.decisions.filter((d) => d.deltaPct != null && d.model.action !== 'hold').length,
+      profit: mine.modelStats.totalProfit,
+      insufficient: mine.modelStats.count < data.minSamples,
+      tone: 'model',
+    });
     winRows.push({
       key: '__mine__',
-      label: '我的选择',
-      winRate: mineWinRate,
-      betWinRate: mineBetWinRate,
-      count: mineRows.length,
-      betCount: mineBets.length,
-      profit: round2(mineProfit),
-      insufficient: mineRows.length < data.minSamples,
+      label: '我的操作',
+      winRate: mine.mineStats.winRate,
+      count: mine.mineStats.count,
+      betCount: mine.decisions.filter((d) => d.deltaPct != null && d.mine.action !== 'hold').length,
+      profit: mine.mineStats.totalProfit,
+      insufficient: mine.mineStats.count < data.minSamples,
       tone: 'mine',
     });
+  } else {
+    // 旧的多来源模式（没配 FUND_MODEL 时）还按来源列
+    for (const g of data.scorecard.bySource) {
+      winRows.push({
+        key: g.source || g.key,
+        label: g.sourceLabel || g.source || g.key,
+        winRate: g.opportunity?.winRate ?? null,
+        count: g.opportunity?.count ?? 0,
+        betCount: g.directional?.count ?? 0,
+        profit: g.money?.totalProfit ?? null,
+        insufficient: Boolean(g.opportunity?.insufficient),
+        tone: 'model',
+      });
+    }
   }
-  winRows.sort((a, b) => (b.winRate ?? -1) - (a.winRate ?? -1));
 
   /* ── 图二：总的投资结果 ──────────────────────────────────── */
   const baseline = data.simulations.find((s) => s.isBaseline) || null;
@@ -155,7 +148,7 @@ export function FundEvaluationOverview({ data }: { data: FundEvaluation }) {
   if (actual) {
     invRows.push({
       key: '__mine__',
-      label: '我的选择（实际）',
+      label: '我的操作（实际）',
       twrPct: actual.twrPct ?? null,
       returnPct: actual.returnPct ?? null,
       netInvested: actual.netInvested ?? null,
@@ -190,8 +183,6 @@ export function FundEvaluationOverview({ data }: { data: FundEvaluation }) {
   const invSpan = invDomain[1] - invDomain[0] || 1;
   const invZeroLeft = ((0 - invDomain[0]) / invSpan) * 100;
 
-  const bestRate = data.picks?.bestRate ?? null;
-  const pickYuan = data.picks?.totalPickValueYuan ?? null;
   const span = data.scorecard.span;
 
   return (
@@ -200,42 +191,51 @@ export function FundEvaluationOverview({ data }: { data: FundEvaluation }) {
         <div>
           <div className="eval-title">总览</div>
           <div className="faint">
-            窗口取「{windowLabel}」，{sampleCount} 条建议到期；左右两张图看的是同一段行情的两种问法
+            窗口取「{windowLabel}」，{sampleCount} 条建议到期；
+            左边看 {modelLabel} 说得准不准，右边看照它做 vs 你自己做
           </div>
         </div>
       </div>
 
       <div className="evov-metrics">
         <div className="evov-metric">
-          <span>参与剧本</span>
-          <b>{Math.max(invRows.length - (actual ? 2 : 1), 0)} 家 + 你自己</b>
-          <em>谁的剧本都从同一份老仓位出发</em>
+          <span>建议条数</span>
+          <b>{data.scorecard.rowCount} 条</b>
+          <em>{modelLabel} 的历史记录，全部按纸上交易打分</em>
         </div>
         <div className="evov-metric">
-          <span>我的挑中最优</span>
-          <b className={bestRate != null && bestRate >= 50 ? 'up' : ''}>{fmtPct(bestRate, 1)}</b>
+          <span>我与 AI 一致</span>
+          <b className={mine?.agreeRate != null && mine.agreeRate >= 50 ? 'up' : ''}>
+            {fmtPct(mine?.agreeRate ?? null, 1)}
+          </b>
           <em>
-            {data.picks?.count ?? 0} 次同日分歧 · {data.picks?.positive ?? 0} 次挑对
+            {mine ? `${mine.same}/${mine.count} 次同日同基金照做或不动` : '暂无对照'}
           </em>
         </div>
         <div className="evov-metric">
-          <span>挑选增值合计</span>
-          <b className={(pickYuan ?? 0) > 0 ? 'up' : 'down'}>{fmtYuan(pickYuan)}</b>
-          <em>相对「挑另一条」的差额，样本极小</em>
+          <span>偏离的差额</span>
+          <b className={(mine?.totalDeltaYuan ?? 0) > 0 ? 'up' : (mine?.totalDeltaYuan ?? 0) < 0 ? 'down' : ''}>
+            {fmtYuan(mine?.totalDeltaYuan ?? null)}
+          </b>
+          <em>
+            {mine
+              ? `${mine.deviations} 次改主意/没动，正数说明你改得更好`
+              : '暂无对照'}
+          </em>
         </div>
         <div className="evov-metric">
           <span>数据覆盖</span>
-          <b>{data.scorecard.rowCount} 条建议</b>
-          <em>{span ? `${span.from} ~ ${span.to}（${span.days} 天）` : '暂无区间'}</em>
+          <b>{span ? `${span.from.slice(5)} ~ ${span.to.slice(5)}` : '暂无区间'}</b>
+          <em>{span ? `${span.days} 个交易日` : '还没有建议'}</em>
         </div>
       </div>
 
       <div className="evov-grid">
         <section className="evov-panel">
           <div className="evov-sub">
-            谁说得更准
+            {modelLabel} 说得准不准
             <span className="faint">
-              条形长度＝机会成本口径胜率（持有记 0 分，全量可比）
+              条形长度＝机会成本口径胜率（持有记 0 分）
             </span>
           </div>
           {winRows.length === 0 ? (
@@ -250,8 +250,7 @@ export function FundEvaluationOverview({ data }: { data: FundEvaluation }) {
                 <div className="evov-barcol">
                   <Bar value={r.winRate ?? 0} domain={[0, 100]} zeroLeft={0} />
                   <div className="evov-note">
-                    {r.count} 条 · 其中 {r.betCount} 条真下单，这部分胜率{' '}
-                    {fmtPct(r.betWinRate, 1)}
+                    {r.count} 条 · 其中 {r.betCount} 条真下单
                   </div>
                 </div>
                 <div className="evov-val">
@@ -269,7 +268,7 @@ export function FundEvaluationOverview({ data }: { data: FundEvaluation }) {
           <div className="evov-sub">
             照谁做挣了多少
             <span className="faint">
-              条形长度＝时间加权收益率 TWR%，右侧为本金与盈亏
+              条形长度＝时间加权收益率 TWR%
             </span>
           </div>
           {invRows.length === 0 ? (
