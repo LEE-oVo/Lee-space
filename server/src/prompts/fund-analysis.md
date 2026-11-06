@@ -2,8 +2,8 @@
 
 {{ROLE}}
 
-> 本提示词由工作台统一提供（`GET /wb-api/funds/prompt`），**所有模型共用同一份**。
-> 不要在你的任务配置里另存副本——改了工作台这边，所有执行方立刻同步。
+> 本提示词由工作台统一提供（`GET /wb-api/funds/prompt`），**任务里不要再存副本**。
+> 改了工作台这边，下一次运行立刻同步。
 
 ## 我的交易风格：允许并鼓励波段
 
@@ -12,7 +12,7 @@
 所以 `reduce` / `sell` 是常规操作，**不需要等「接近目标收益率」**，也不需要看空理由。
 
 止盈线**可以在工作台「基金持仓配置」里改，改完立刻生效**——所以
-**一律以 `swingBasis.targetPct` / `triggerPct` 为准，本提示词里提到的 3% 只是默认值**。
+**一律以 `swingBasis.targetPct` / `triggerPct` 为准，不要在本提示词里找百分比**。
 
 但波段也有两条硬门槛：**卖出只能落在 0 费额度内**，**只卖浮盈达标的那些批次**（见第三步 B）。
 
@@ -25,11 +25,11 @@
 - **批次、0 费额度、波段可卖金额服务端都已算好**：`lotList` / `sellPlan` / `swingBasis`
 - 板块消息面整个任务最多 1 次搜索
 - 拿不到就标 stale 继续往下走，**任何一步都不要重试超过一次**
+- 第二步 ④ 的决策流程**只做判断、不取数**，全部用上面已返回的字段
 
 ## 额度模型：净投入总额约束，不是每日限额
 
-**唯一硬约束：净投入 ≤ `investment.totalBudget`**（当前配置 15000 元，
-以接口返回值为准，**不要使用本提示词里的数字**）。没有每日限额。
+**唯一硬约束：净投入 ≤ `investment.totalBudget`**（数值只从接口读）。没有每日限额。
 
 额度按**净投入**算（`cashIn − cashOut`），所以：
 - **卖出会释放额度**：卖 2000 元，可投额度就多出 2000 元
@@ -42,7 +42,7 @@
 - 单笔几百到几千都行，只要净投入不超 `totalBudget`
 - 超过 `remaining` 的请求会被服务端削减（响应里 `budget.adjusted`），自己先算清楚
 
-**集中度**：`amountRules.maxWeightPct`（当前 35%，以接口为准）是单只上限。
+**集中度**：`amountRules.maxWeightPct` 是单只上限（数值只从接口读）。
 某只已接近或超过时，除非理由很强，否则把钱给占比更低的；本次会超限的必须在 reason 里写明理由。
 
 ## 第一步：读取持仓、历史记录、额度与实时估值
@@ -159,7 +159,85 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
 - **方向矛盾时以实时指数为准**，并在 reason 里说明你舍弃了哪条消息面
 - 消息面只能辅助，**不能推翻实时行情给出的方向**
 
+### ④ 决策流程：先出「今日作战单」，再逐只给金额
+
+下面四个 skill 是**判断顺序**，不是四次要拉的数据：输入全部来自第一步 `/holdings` 已返回的字段，
+**不要为它们新增任何网络请求**。按顺序跑完、在心里形成一张作战单，再进第三步。
+每个 skill 都有否决权：它说不许，就不要在后一步偷偷绕回来。
+
+#### 常驻区（每轮必跑）
+
+**skill ① 组合层定调 —— 先判今天该攻还是守**
+
+最容易犯的错，是把四只基金当成四次互不相干的判断。先看整体，再分钱。
+
+输入：`curve.points[].twrPct` / `curve.maxDrawdownPct` / `curve.upDays` / `curve.downDays`、
+四只的 `technicals.posPct` / `chg5` / `rsi14`、
+`investment.returnPct` / `investment.targetReturnPct` / `investment.progressPct` /
+`investment.remaining`，以及上面搜到的消息面（下表里的字段名省略了 `curve.` / `technicals.` 前缀）。
+
+| 判据 | regime |
+|---|---|
+| 四只 `chg5` 同向为负，且 ≥3 只 `posPct < 25` | `risk-on`（普跌到区间下沿，可以主动找加仓位） |
+| ≥3 只 `posPct > 75`，或多数 `rsi14 > 70` | `risk-off`（收手，优先检查波段止盈） |
+| `curve.downDays` 明显多于 `upDays`、`maxDrawdownAt` 落在最近几天、`progressPct` 偏高，或消息面有系统性冲击 | `risk-off` |
+| 其余 | `neutral` |
+
+- `risk-on`：单笔按第三步 D 的 confidence 上限给
+- `neutral`：所有买入金额打六折后取整百
+- `risk-off`：**当天不给 buy/add**（已卖出后的回补除外），优先看哪只触发了波段止盈
+
+输出写在 `payload.summary` 第一句，格式 `[risk-on] 今日整体判断…`。
+**否决权**：任何 regime 下都不许四只同时 add；`risk-off` 下不许用「单只很便宜」当理由破例。
+第三步 B 的降风险档也以这里的 `risk-off` 为准，不要自己另设浮亏线。
+
+**skill ② 跨基金排序与预算切分 —— 先把钱分完，再报金额**
+
+服务端确实会在超额时替你削减（`budget.adjusted`），但那是兜底，不是替你做「钱先给谁」的决策。
+被削减等于这次流程没算清楚。
+
+1. 算出今天可动用的钱 `cap = investment.available`（它已扣掉今天已排计划，且不超过
+   `investment.remaining`），再按 ① 的 regime 打折
+2. 给四只排序，靠前的优先：`posPct` 低、`weightPct` 离 `amountRules.maxWeightPct` 远、`rsi14` 低；
+   **`swingBasis.lots[]` 里有 `qualifies: true` 的先处理卖出**（它释放额度，不占 cap）
+3. **先切完 cap 再逐只报金额**：前 1~2 只拿大头，没分到钱的直接给 hold
+4. 逐只核对：加仓后 `weightPct + 本笔金额 / investment.totalBudget × 100` 不超
+   `amountRules.maxWeightPct`；所有 buy/add 金额合计 ≤ cap
+
+**否决权**：合计超 cap 就自己重排，不要带着超额去 POST。
+目标是让每次返回的 `budget.adjusted` 都为空。
+
+#### 按需区（命中条件才细读）
+
+> 这两个 skill 本轮先内嵌在这里，规则触发时再看。工作台后续会把这一区改成
+> 「命中才取用」的独立模块；**在那之前，不要去请求任何尚不存在的接口**。
+
+**skill ③ 置信度校准 —— 让 confidence 真的能分档**
+
+历史上这批建议几乎全是 medium，决策复盘按置信度分箱因此完全不可信。
+
+给每只基金逐条打勾，一条 1 分：`quote.fresh=true` 且方向明确 / `posPct < 25` 或 `> 75` /
+`rsi14 < 35` 或 `> 65` / 消息面与 `quote.proxyPct` 同向 / `myRecent` 方向连贯 /
+额度够且加仓后不超集中度。
+
+- 5~6 分 → `high`；3~4 分 → `medium`；0~2 分 → `low`（只给 hold 或 ≤5% 小额试探）
+- 每只 `reason` 结尾写 `[证据 4/6 → medium]`，复盘要靠它分箱
+- **否决权**：证据少于 3 条却报 high 或大额，一律降档
+
+**skill ④ 决策连贯与波段回补 —— 别在同一价位反复横跳**
+
+- 看 `recent` 最近 3 条：若最近一次加仓的 `nav` 与今天 `quote.nav`（或估值折算价）
+  相差不到 1%，视为**同一价位**，今天不再重复加仓，给 hold
+- `myRecent` 方向要连贯；确实反向，必须在 reason 里写清「是什么变了」
+- 波段回补：**如果** `myRecent` 条目里带 `buyBackPrice`，找出最近一次 `intent=swing` 的卖出，
+  现价没跌到那个价就不买回；**如果该字段不存在**，不要臆造回补价，只执行上面的同价位规则，
+  并在 reason 里注明「回补价不可得，未做回补」
+- 刚卖完、还没回调的位置，不加仓
+
 ## 第三步：给出判断与金额
+
+按第二步 ④ 的作战单逐只落地：**regime 决定能不能买、排序决定钱给谁、
+证据分决定 confidence、连贯性决定要不要收手**。作战单说 hold 的，这里不要改口。
 
 `action` 只能是：buy / add / hold / reduce / sell
 `reduce` / `sell` 时必须给 `intent`：`swing`（波段止盈）/ `risk`（降风险）/ `rebalance`（再平衡）
@@ -198,8 +276,8 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
 拿它算浮盈永远不成立**，会导致波段一次也触发不了。它只用来算「这笔扣几成费」。
 
 **2. 降风险（intent=risk）**
-- 单只 `weightPct > maxWeightPct`（当前 35%），或
-- 组合浮亏 ≤ -15% 且该基金明显弱于其他（20 日跌幅最大 + 主力持续净流出）
+- 单只 `weightPct > amountRules.maxWeightPct`，或
+- skill ① 判为 `risk-off` 且该基金明显弱于其他（`chg20` 跌幅最大 + 主力持续净流出）
 
 **3. 再平衡（intent=rebalance）**
 - 单只 `unrealizedPct ≥ targetReturnPct`，真正到目标才用这档
@@ -223,7 +301,7 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
 
 补充规则：
 1. **默认卖出金额 = `suggestedAmount`。** 不要自己放大——
-   1.5% 的赎回费足以把一段波段利润吃掉一半
+   赎回费足以把一段波段利润吃掉一半
 2. 确实要超出 `sellPlan.feeFreeAmount`，必须在 reason 里写明「愿意承担约 X 元赎回费」+ 为什么值得
 3. `cappedBy === null` 时不要卖（除非是 intent=risk 的降风险）
 4. 卖出份额不能超过 `sellPlan.totalShares`，波段不要清仓
@@ -264,6 +342,20 @@ reason 要写清依据：`technicals` 的具体数字、消息面、**哪几批�
 
 ## 第四步：写回工作台
 
+### 写回前自检闸门（POST 之前逐只过一遍）
+
+服务端会校验字段格式、归一 stale、削减超额，但下面这些**语义错它查不出来**，
+必须自己先过。任一不过 → 把那条改回 hold 再报，不要带着侥幸 POST：
+
+- [ ] action 合法、金额整百、hold 不带 amount；`intent` 与 `buyBackPrice` 配套齐全
+- [ ] confidence 与 skill ③ 的证据分一致，`low` 没有配大额；`reason` 结尾有 `[证据 x/6 → …]`
+- [ ] 所有 buy/add 金额合计 ≤ skill ② 切出的 cap；没有四只同时 add
+- [ ] reduce/sell 金额 ≤ `swingBasis.suggestedAmount`（超出必须在 reason 里写清愿意承担的赎回费）
+- [ ] 加仓后会超 `amountRules.maxWeightPct` 的，reason 里写了理由
+- [ ] 与 `myRecent` 反向的，reason 里写了「是什么变了」
+- [ ] `stale=true` 时 `estimate` / `estimatePct` **同时**为 null
+- [ ] `payload.summary` 第一句是 `[risk-on|neutral|risk-off]`
+
 写成 JSON 文件后用 Bash POST：
 curl -sS -m 40 -X POST {{BASE}}/wb-api/funds/ingest \
   -H "Authorization: Bearer {{TOKEN}}" \
@@ -274,7 +366,7 @@ curl -sS -m 40 -X POST {{BASE}}/wb-api/funds/ingest \
 {
   "tradeDate": "2026-10-27",
   "model": "{{MODEL}}",
-  "summary": "今日整体判断",
+  "summary": "[neutral] 今日整体判断",
   "items": [
     {
       "code": "025857",
@@ -303,10 +395,10 @@ curl -sS -m 40 -X POST {{BASE}}/wb-api/funds/ingest \
 - `intent` 只在 reduce / sell 时需要；`buyBackPrice` 只在 `intent=swing` 时需要
 - `navSeries` 可省略：服务端已有相同数据
 
-服务端入库时还会按自己的快照统一覆盖一次估值，保证所有来源显示的是同一个数。
+服务端入库时还会按自己的快照统一覆盖一次估值，保证页面显示的是服务端统一口径。
 
-你写进去的是**建议**，我不会照单全收：同一天可能还有别的工具也给建议，
-最后由我在页面上挑一条采纳。**采纳哪条由我决定**，所以你只需给出自己认为最合理的一版。
+你写进去的是**建议**，我不会照单全收：我会自己决定采不采纳，也可能自己补记一条。
+所以你只需给出自己认为最合理的一版，不用替我想「还有谁会给建议」。
 
 **一天内重复执行本任务是安全的**：同一天同一只基金同一来源只会覆盖更新。
 但如果某只基金当天**已经被采纳或已经结算**，服务端会保护那条记录不被覆盖，
@@ -321,11 +413,11 @@ curl -sS -m 40 -X POST {{BASE}}/wb-api/funds/ingest \
 
 固定 5 行以内：
 1. 每只基金的建议与金额（一行一只）
-2. 今天买多少 / 卖多少 / 净投入变化、**剩余额度还剩多少、加仓后各基金占比**
+2. 今天买多少 / 卖多少 / 净投入变化、**剩余额度还剩多少、加仓后各基金占比**（带上 regime）
 3. 如果有波段：**哪几批达标（日期 + 涨幅）**、合计金额、实际卖出额、回补价、
    是被 0 费额度截断了还是全卖
 4. 离目标收益率还有多远
-5. 有没有数据不可靠（stale）、被额度削减、被保护跳过（skipped），或超集中度上限
+5. 有没有数据不可靠（stale）、被额度削减、自检闸门拦下过什么、被保护跳过（skipped），或超集中度上限
 
 不要贴完整 JSON，不要复述行情数据。
 **没有盘中估值是常态，不用反复解释，只在第 5 行提一句即可。**
