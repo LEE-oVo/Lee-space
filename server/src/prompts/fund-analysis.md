@@ -71,9 +71,14 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
 - **`swingBasis`** —— **今天能卖哪一部分（已逐批算好）**：
   `price` / `priceSource`（`estimate`=盘中估值，`nav`=最近净值）/ `targetPct` / `triggerPct` /
   `lots[]` / `qualifiedCount` / `qualifiedShares` / `candidateAmount` / `sellableAmount` /
-  `suggestedAmount` / `cappedBy` / `feeFreeAmount` / `note`
-  - `lots[]` 每个加仓批次一条：`buyDate` / `unitCost` / `shares` / `gainPct` / `marketValue` / `qualifies`
+  `suggestedAmount` / `cappedBy` / `feeFreeAmount` / `closedShares` / `closedSellCount` / `note`
+  - `lots[]` 每个加仓批次一条：`buyDate` / `unitCost` / `shares` / `closedShares` /
+    `gainPct` / `marketValue` / `qualifies`
   - **`qualifies: true` 的批次就是今天可以卖的部分，每批独立判断**
+  - ⚠️ **此前已经减仓过的批次不会再列进 `lots[]`**：服务端按「卖出日之前买入、由近到远」
+    扣掉相应份额，`closedShares` 是累计扣掉的份额，`note` 里也会写明。
+    看到 `lots` 比预期少、或某批 `shares` 变小是正常的 —— **不要自己把它补回来**，
+    也不要拿 `lotList` 的原始份额重算一遍
   - `candidateAmount` = 所有达标批次按现价合计
   - **`sellableAmount` = 已和 0 费额度取小后的可卖金额**
   - **`suggestedAmount` = 再砍成整百的金额，直接拿去报 `amount`**
@@ -258,6 +263,8 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
 
 - **逐个看 `swingBasis.lots`**：`qualifies === true` 的批次，就是今天可以卖的那部分。
   **每次加仓是独立的小仓位，各算各的** —— 不是只看最近一次，也不是看加权总成本
+- ⚠️ 服务端已经把**此前减仓过的批次扣掉**（见 `closedShares`）。不要拿 `lotList` /
+  `recent` 里的历史加仓金额自己凑一个更大的数，那会把已经卖掉的部分算第二遍
 - 「达标」的门槛是 `swingBasis.triggerPct`（= `targetPct` 减去 0.3pp 噪声余量），
   服务端已经算在 `qualifies` 里，**你不要自己再判断百分比**，也不要写死 3%
 - 所有达标批次的金额合计 = `candidateAmount`
@@ -287,6 +294,10 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
 ❌ **也不要只肯卖赚钱的那只。** 按批次算，卖谁都是卖最早那批。
 
 ### C. 三个参考系不要混
+
+> 账本卖出按 FIFO 从最早批次扣份额，`swingBasis` 则按「哪几次加仓已经做过波段」
+> 单独扣减，两套口径互不干扰。所以 `lotList` 里某批 `remain` 还是满的，
+> **不代表它还有波段机会** —— 该不该卖一律看 `swingBasis.lots`。
 
 卖出这件事有三个完全不同的问题，各用各的数据：
 

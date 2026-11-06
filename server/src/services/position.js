@@ -1079,7 +1079,47 @@ function swingThresholds() {
  *   → 和 0 费额度取小 → `sellableAmount`（就是今天该报的卖出金额）
  *
  * 而 `lotList[0]` 只负责回答另一个问题：这笔卖出去扣几成费。
+ *
+ * ③ 第三个坑（2026-11-06 修）：**卖过的批次会被再算一遍**。
+ *    卖出结算按 FIFO 从最老批次扣 `remain`，队首几乎永远是 import 底仓，
+ *    所以「11-02 加仓那批已经止盈卖掉」在账本上没有任何痕迹 ——
+ *    它的 remain 还是满的，第二天 swingBasis 又把它算进 candidateAmount。
+ *    实测 11-04 卖 020274 165.96 份，底仓 484.48→318.52，六笔加仓批次一分未动。
+ *
+ * 因此两套口径刻意分开，谁也不改谁：
+ *    fund_lots.remain  → 真实份额 / 赎回费 / 已实现盈亏（FIFO，结算用，不动）
+ *    下面的 closed     → 哪几次加仓的波段机会已经用掉（只用于出建议）
+ *
+ * 冲抵规则：每笔已执行的 reduce/sell，只冲抵「卖出日之前买入」的加仓批次，
+ * 由近到远（LIFO，符合「卖的是最近那次加仓」的心智）。用卖出日作上界，
+ * 是为了不误伤之后按 buyBackPrice 买回来的新批次。
  */
+
+/** 已执行过的减仓，折算成份额；按交易日升序返回，供 swingBasis 逐笔冲抵 */
+function closedSwingSells(code) {
+  const rows = getDb()
+    .prepare(
+      `SELECT trade_date, amount, nav, settled_nav, settled_shares
+         FROM fund_advice
+        WHERE code = ? AND executed = 1
+          AND action IN ('reduce', 'sell') AND amount > 0
+        ORDER BY trade_date, id`
+    )
+    .all(code);
+
+  return rows
+    .map((r) => {
+      let shares = Number(r.settled_shares);
+      if (!Number.isFinite(shares) || shares <= 0) {
+        // 还没结算也要算进去：否则当天点完「已执行」，模型重跑时又会重复建议
+        const px = Number(r.settled_nav) || Number(r.nav);
+        shares = px > 0 ? Number(r.amount) / px : 0;
+      }
+      return { date: r.trade_date, shares };
+    })
+    .filter((s) => s.shares > 0);
+}
+
 export function swingBasis(code, price, holding = null, feeFreeAmount = null, priceSource = 'nav') {
   const h = holding || getHolding(code);
   if (!h) return null;
@@ -1088,24 +1128,47 @@ export function swingBasis(code, price, holding = null, feeFreeAmount = null, pr
   const { target, trigger } = swingThresholds();
 
   // 只看系统上线后的加仓批次；底仓不参与波段判断（它是历史沉积，不是波段仓位）
-  const buys = lotsOf(code).filter(
-    (l) => Number(l.remain) > 0.000001 && String(l.source || '') !== 'import'
-  );
+  const buyLots = lotsOf(code)
+    .filter((l) => Number(l.remain) > 0.000001 && String(l.source || '') !== 'import')
+    .map((l) => ({ ...l, closed: 0 }));
 
-  const lots = buys.map((l) => {
-    const cost = Number(l.unit_cost);
-    const shares = round2(l.remain);
-    const gainPct = cost > 0 ? round2((px / cost - 1) * 100) : null;
-    return {
-      buyDate: l.buy_date,
-      unitCost: round4(cost),
-      shares,
-      gainPct,
-      // 这一批按现价能卖多少钱
-      marketValue: round2(shares * px),
-      qualifies: gainPct != null && gainPct >= trigger,
-    };
-  });
+  // 把已经执行过的减仓冲抵到加仓批次上：由近到远，只冲抵卖出日之前买入的。
+  // 这里改的是建议层的「还有没有波段机会」，账本 remain 一分不动。
+  const sells = closedSwingSells(code);
+  let closedShares = 0;
+  for (const sell of sells) {
+    let left = sell.shares;
+    const pool = buyLots
+      .filter((b) => b.buy_date < sell.date)
+      .sort((a, b) => (a.buy_date < b.buy_date ? 1 : a.buy_date > b.buy_date ? -1 : b.id - a.id));
+    for (const b of pool) {
+      if (left <= 0.000001) break;
+      const take = Math.min(Math.max(0, Number(b.remain) - b.closed), left);
+      if (take <= 0.000001) continue;
+      b.closed += take;
+      left -= take;
+      closedShares += take;
+    }
+  }
+
+  const lots = buyLots
+    .map((l) => {
+      const cost = Number(l.unit_cost);
+      const shares = round2(Math.max(0, Number(l.remain) - l.closed));
+      const gainPct = cost > 0 ? round2((px / cost - 1) * 100) : null;
+      return {
+        buyDate: l.buy_date,
+        unitCost: round4(cost),
+        shares,
+        /** 这一批里已经做过波段、不再重复计入的份额 */
+        closedShares: round2(l.closed),
+        gainPct,
+        // 这一批按现价还能卖多少钱
+        marketValue: round2(shares * px),
+        qualifies: shares > 0.000001 && gainPct != null && gainPct >= trigger,
+      };
+    })
+    .filter((l) => l.shares > 0.000001);
 
   const qualified = lots.filter((l) => l.qualifies);
   const candidateAmount = round2(qualified.reduce((s, l) => s + l.marketValue, 0));
@@ -1121,18 +1184,23 @@ export function swingBasis(code, price, holding = null, feeFreeAmount = null, pr
   // 金额必须整百，服务端直接砍好，省得模型再算一遍又算错
   const suggestedAmount = Math.floor(sellableAmount / 100) * 100;
 
+  const closedNote = closedShares > 0.000001
+    ? `已扣除 ${round2(closedShares)} 份此前减仓过的加仓批次（不再重复建议）；`
+    : '';
   let note;
   if (!lots.length) {
-    note = '还没有系统上线后的加仓批次，没有可做波段的仓位；底仓成本只影响卖出记账';
+    note = closedNote
+      ? `${closedNote}已没有剩余可做波段的加仓仓位，今天不做波段`
+      : '还没有系统上线后的加仓批次，没有可做波段的仓位；底仓成本只影响卖出记账';
   } else if (!qualified.length) {
     const best = lots.reduce((m, l) => ((l.gainPct ?? -999) > (m.gainPct ?? -999) ? l : m));
-    note = `${lots.length} 个加仓批次都没到 ${target}%（最好的是 ${best.buyDate} @${best.unitCost}，`
+    note = `${closedNote}${lots.length} 个加仓批次都没到 ${target}%（最好的是 ${best.buyDate} @${best.unitCost}，`
       + `现价 ${best.gainPct}%），今天不做波段`;
   } else if (cappedBy === 'feeFree') {
-    note = `${qualified.length} 个批次达标，合计 ¥${candidateAmount}，`
+    note = `${closedNote}${qualified.length} 个批次达标，合计 ¥${candidateAmount}，`
       + `但 0 费额度只有 ¥${free}，只能卖 ¥${sellableAmount}；剩下的等额度恢复（或下个交易日）再卖`;
   } else {
-    note = `${qualified.length} 个批次达标，合计 ¥${candidateAmount}，0 费额度够，可以全卖`;
+    note = `${closedNote}${qualified.length} 个批次达标，合计 ¥${candidateAmount}，0 费额度够，可以全卖`;
   }
 
   return {
@@ -1141,8 +1209,13 @@ export function swingBasis(code, price, holding = null, feeFreeAmount = null, pr
     priceSource,
     targetPct: target,
     triggerPct: trigger,
-    /** 逐个加仓批次，FIFO 之外的另一个维度：谁赚到了 3% */
+    /** 逐个加仓批次，FIFO 之外的另一个维度：谁赚到了 3%（已平完的批次不再列出） */
     lots,
+    /** 已经减仓过、不再重复计入的份额 / 按现价折算的金额；只影响建议层 */
+    closedShares: round2(closedShares),
+    closedAmount: round2(closedShares * px),
+    /** 参与冲抵的已执行减仓笔数，排查口径时用 */
+    closedSellCount: sells.length,
     qualifiedCount: qualified.length,
     qualifiedShares: candidateShares,
     /** 达标批次按现价合计能卖多少钱 */
