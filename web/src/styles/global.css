@@ -1393,6 +1393,40 @@ table.data tbody tr:hover {
   font-size: 11px;
   color: var(--c-text-faint);
 }
+/* 份额：与金额并列的一等字段。加仓红 / 减仓绿，沿用 chip 的语义色 */
+.fund-record-shares {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--c-border);
+  background: var(--c-bg);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--c-text-dim);
+}
+.fund-record-shares b { font-weight: 600; }
+.fund-record-shares.is-add {
+  color: var(--c-danger);
+  border-color: color-mix(in srgb, var(--c-danger) 32%, transparent);
+}
+.fund-record-shares.is-reduce {
+  color: var(--c-success);
+  border-color: color-mix(in srgb, var(--c-success) 32%, transparent);
+}
+.fund-record-shares.is-pending {
+  color: var(--c-text-faint);
+  border-style: dashed;
+}
+.fund-record-totals {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  line-height: 1.5;
+}
 .fund-record-summary {
   margin-top: 6px;
   font-size: 12px;
@@ -2899,6 +2933,7 @@ table.data tbody tr:hover {
   .fund-record-head { gap: 6px; }
   .fund-record-act,
   .fund-record-state { margin-left: 0; }
+  .fund-record-totals { align-items: flex-start; }
 
   .modal-backdrop { padding: 10px; place-items: end center; }
   .modal {

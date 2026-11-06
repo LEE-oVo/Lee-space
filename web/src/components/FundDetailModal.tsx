@@ -12,6 +12,19 @@ function pctText(value: number | null | undefined) {
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 }
 
+/** 份额可能有小数（金额÷净值，服务端保留 2 位），整数时别拖一串 .00 */
+function sharesText(value: number) {
+  return value.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+}
+
+function isBuyAction(action: FundAction) {
+  return action === 'buy' || action === 'add';
+}
+
+function isSellAction(action: FundAction) {
+  return action === 'reduce' || action === 'sell';
+}
+
 const ACTION_LABEL: Record<FundAction, string> = {
   buy: '买入',
   add: '加仓',
@@ -95,13 +108,24 @@ export function FundDetailModal({
     let added = 0;
     let reduced = 0;
     let count = 0;
+    // 份额按结算后的真实值累加：加仓按金额下单、减仓按份额下单，两边都要能看到合计
+    let addedShares = 0;
+    let reducedShares = 0;
+    let sharesPending = 0;
     for (const h of history || []) {
       if (!h.executed || !h.amount) continue;
       count += 1;
-      if (h.action === 'buy' || h.action === 'add') added += h.amount;
-      if (h.action === 'reduce' || h.action === 'sell') reduced += h.amount;
+      if (isBuyAction(h.action)) added += h.amount;
+      if (isSellAction(h.action)) reduced += h.amount;
+      const sh = h.settled && h.settledShares != null ? Number(h.settledShares) : null;
+      if (sh != null && sh > 0) {
+        if (isBuyAction(h.action)) addedShares += sh;
+        if (isSellAction(h.action)) reducedShares += sh;
+      } else if (!h.settled) {
+        sharesPending += 1;
+      }
     }
-    return { added, reduced, count };
+    return { added, reduced, count, addedShares, reducedShares, sharesPending };
   }, [history]);
 
   // 记录按天分组：同一天通常只有一条 AI 建议；我改主意时会有第二条补记。
@@ -123,6 +147,13 @@ export function FundDetailModal({
    */
   function renderRecord(h: FundAdvice, opts: { delay: number; locked: boolean; choosable: boolean }) {
     const isAdopted = h.executed;
+    const buys = isBuyAction(h.action);
+    const sells = isSellAction(h.action);
+    // 份额要等结算任务拿到当日收盘净值才能折算出来（金额 ÷ 净值），结算前只给占位
+    const settledShares = h.settled && h.settledShares != null && Number(h.settledShares) > 0
+      ? Number(h.settledShares)
+      : null;
+    const waitingShares = Boolean(h.executed && h.amount && !h.settled);
     return (
       <div
         className={`fund-record${opts.locked ? ' is-locked' : ''}${isAdopted ? ' is-adopted' : ''}`}
@@ -136,6 +167,23 @@ export function FundDetailModal({
             <span className="fund-chip-label">{ACTION_LABEL[h.action]}</span>
             {h.amount ? <b className="mono fund-chip-amt">¥{h.amount.toLocaleString('zh-CN')}</b> : null}
           </span>
+          {/* 份额和金额并列：加仓按金额下单、减仓按份额下单，两个数字都要能直接照着操作 */}
+          {(buys || sells) && (settledShares != null ? (
+            <span
+              className={`fund-record-shares is-${buys ? 'add' : 'reduce'}`}
+              title="份额由结算任务按当日收盘净值折算后回填，不是估算值"
+            >
+              {buys ? '加仓份额' : '减仓份额'}{' '}
+              <b className="mono">{buys ? '+' : '−'}{sharesText(settledShares)}</b> 份
+            </span>
+          ) : waitingShares ? (
+            <span
+              className="fund-record-shares is-pending"
+              title="要等收盘净值公布、结算任务跑完才有份额"
+            >
+              {buys ? '加仓份额' : '减仓份额'} 待结算
+            </span>
+          ) : null)}
           {/* 只有候选才标来源，被采纳的那条不需要——我不关心是谁建议的 */}
           {!isAdopted && (
             <span className="fund-src-badge" data-source={String(h.source)}>
@@ -174,7 +222,6 @@ export function FundDetailModal({
             h.settledShares ? (
               <>
                 <span>已结算 · 净值 {(h.settledNav ?? 0).toFixed(4)}</span>
-                <span>{h.settledShares} 份</span>
                 {h.settledFee ? <span>费用 ¥{h.settledFee.toFixed(2)}</span> : null}
                 {h.settledRealized != null ? (
                   <span>
@@ -539,8 +586,15 @@ export function FundDetailModal({
               <div style={{ fontWeight: 500 }}>加减仓记录</div>
               <div className="row wrap" style={{ gap: 6 }}>
                 {totals.count > 0 && (
-                  <span className="faint" style={{ fontSize: 12 }}>
-                    已执行累计：加仓 ¥{totals.added.toLocaleString('zh-CN')} · 减仓 ¥{totals.reduced.toLocaleString('zh-CN')}
+                  <span className="faint fund-record-totals" style={{ fontSize: 12 }}>
+                    <span>
+                      已执行累计：加仓 ¥{totals.added.toLocaleString('zh-CN')} · 减仓 ¥
+                      {totals.reduced.toLocaleString('zh-CN')}
+                    </span>
+                    <span>
+                      份额：加仓 +{sharesText(totals.addedShares)} 份 · 减仓 −{sharesText(totals.reducedShares)} 份
+                      {totals.sharesPending > 0 ? `（${totals.sharesPending} 笔待结算）` : ''}
+                    </span>
                   </span>
                 )}
                 {canManage && (
@@ -598,6 +652,9 @@ export function FundDetailModal({
               同一天可能既有 AI 建议、也有我自己的补记，但只能采纳其中一个——
               被采纳的那条就是我当天真实做的操作，账本与统计只认它，其余仅作对照。
               定时任务读取的也是这份「我做过什么」，不含任何来源信息。
+              <br />
+              份额由结算任务按当日收盘净值折算后回填（金额 ÷ 净值），收盘前显示「待结算」，
+              不是估算值；加仓按金额下单、减仓按份额下单，都以这里结算后的份额为准。
             </div>
           </div>
         </>

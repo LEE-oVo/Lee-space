@@ -115,8 +115,12 @@ export function FundRecordModal({ code, name, onClose, onSaved }: Props) {
               placeholder="加仓请填整百，如 300"
               required
             />
-            <div className="faint" style={{ fontSize: 12, marginTop: 4 }}>
-              加仓建议整百，且所有基金当日加仓合计不超过 500
+            <div className="faint" style={{ fontSize: 12, marginTop: 4, lineHeight: 1.7 }}>
+              金额请填整百；额度规则以工作台「基金持仓配置」为准（不设每日上限，
+              硬约束是净投入不超过总投入上限）。
+              <br />
+              这里只记金额：份额由结算任务按当日收盘净值折算后自动补上，无需填写；
+              减仓实际按份额下单，结算完成后到「加减仓记录」查看对应的减仓份额。
             </div>
           </div>
         )}

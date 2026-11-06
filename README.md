@@ -152,28 +152,31 @@ sudo vi /opt/workbench/dsh.env     # 或 sudo nano
 
 | action | 金额要求 |
 | --- | --- |
-| buy / add（买入加仓） | **必须是 100 的整数倍**；且**所有基金当日加仓合计不超过 500 元**——这是**每日总预算，不是每只各 500**。仅在模型明确判断为机会时可突破，且必须在 reason 里写明理由 |
-| reduce / sell（减仓卖出） | 金额不限，建议按整百；清仓时按估算持仓市值 |
+| buy / add（买入加仓） | **必须是 100 的整数倍**；硬约束是**净投入 ≤ `investment.totalBudget`**（含已投入，卖出会释放额度），不设每日上限 |
+| reduce / sell（减仓卖出） | 金额不限，建议按整百；波段默认取 `swingBasis.suggestedAmount` |
 | hold（持有） | 不给金额 |
 
 预算不是靠 prompt 记着，而是由接口下发：
 
-- `GET /funds/holdings`（令牌）返回 `amountRules`（`unit:100`、`scope:"daily-total"`、
-  `dailyTotal:500`）与 `todayAllocation`（`used` 已分配 / `budget` 总预算 / `remain` 剩余）
-- 模型分配前先读 `remain`，手动补记过的额度也会被算进 `used`，不会重复给满
-- 预算值可用环境变量 `FUND_DAILY_ADD_BUDGET` 调整，不用改 prompt
+- `GET /wb-api/funds/holdings`（令牌）返回 `investment`（`totalBudget` / `remaining` /
+  `available` / `returnPct`）与 `amountRules`（`unit:100`、`maxWeightPct` 等）
+- 模型分配前先读 `available`（已扣掉当天已排计划），手动补记过的占用也会算进去
+- 总额度、集中度上限与波段止盈线都能在页面「基金持仓配置」里改，改完立刻生效，不用改 prompt
 
 金额校验在**服务端**强约束：action 与金额不匹配（如 hold 却给了金额、加仓没给金额、负数）整批拒绝，
 定时任务按返回的 `details` 修正后重试。
 
 加减仓记录（`fund_advice` 表本身即记录）：
 
-- 每条建议的日期 / 操作 / 金额都会沉淀下来，`GET /funds/holdings`（令牌）返回每只基金
+- 每条建议的日期 / 操作 / 金额都会沉淀下来，`GET /wb-api/funds/holdings`（令牌）返回每只基金
   最近 12 条记录（`recent` 字段），定时任务每次决策前先回看
 - `executed` 标记该建议是否**实际执行**：只有已执行的记录才代表真实仓位变化，
   模型据此避免把"建议过但没买"当成"已经加过仓"
-- 页面在详情弹窗里展示记录时间线与**已执行累计加仓/减仓金额**，可一键切换执行状态
-- 金额类字段（amount / executed）与持仓成本一样，仅 `fund:detail` 可见
+- **份额由结算任务按当日收盘净值折算后回填**（`settled_shares`）：加仓按金额下单、
+  减仓按份额下单，所以页面把「加仓份额 / 减仓份额」与金额并列展示；
+  收盘前显示「待结算」占位，绝不用估算值凑数
+- 页面在详情弹窗里展示记录时间线与**已执行累计的金额与份额**，可一键切换执行状态
+- 金额与份额字段（amount / executed / settled_shares）与持仓成本一样，仅 `fund:detail` 可见
 
 ### 收盘结算：为什么需要第二个定时任务
 
