@@ -122,6 +122,8 @@ export interface FundAdvice {
   confidence: string | null;
   /** 建议金额（元），非负；方向由 action 决定。hold 时为 null */
   amount: number | null;
+  /** 减仓/卖出的指令份额；null = 老记录，按金额折算 */
+  shares: number | null;
   /** 用户是否按建议实际操作过 */
   executed: boolean;
   /** 是否已用真实收盘净值结算 */
@@ -205,7 +207,10 @@ export interface FundPosition {
 export interface FundSwingLot {
   buyDate: string;
   unitCost: number;
+  /** 扣掉已做过波段的部分后，这一批还剩多少份额 */
   shares: number;
+  /** 这一批里已经减仓过、不再重复计入的份额 */
+  closedShares: number;
   gainPct: number | null;
   /** 这一批按现价能卖多少钱 */
   marketValue: number;
@@ -227,8 +232,16 @@ export interface FundSwingBasis {
   candidateAmount: number;
   /** 实际可卖金额（已和 0 费额度取小） */
   sellableAmount: number;
-  /** 再砍成整百，直接拿去报 amount */
+  /** 减仓主指令：今天该赎回的份额（场外只能按份额下单） */
+  suggestedShares: number;
+  /** 参考金额 = suggestedShares × 现价，只是账本用的换算结果 */
   suggestedAmount: number;
+  /** true = 剩余不足一手，今天不该卖 */
+  belowMinLot: boolean;
+  /** 已做过波段、不再重复计入的份额与笔数 */
+  closedShares: number;
+  closedAmount: number;
+  closedSellCount: number;
   /** candidates=受限于达标金额；feeFree=受限于 0 费额度；null=没有达标批次 */
   cappedBy: 'candidates' | 'feeFree' | null;
   feeFreeAmount: number | null;

@@ -32,6 +32,7 @@ export function FundRecordModal({ code, name, onClose, onSaved }: Props) {
   const [date, setDate] = useState(todayStr());
   const [action, setAction] = useState<FundAction>('add');
   const [amount, setAmount] = useState('200');
+  const [shares, setShares] = useState('');
   const [nav, setNav] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -49,6 +50,7 @@ export function FundRecordModal({ code, name, onClose, onSaved }: Props) {
         tradeDate: date,
         action,
         amount: needAmount ? Number(amount) : 0,
+        shares: shares === '' ? null : Number(shares),
         nav: nav === '' ? null : Number(nav),
         note: note.trim() || '手动补记',
       });
@@ -119,8 +121,25 @@ export function FundRecordModal({ code, name, onClose, onSaved }: Props) {
               金额请填整百；额度规则以工作台「基金持仓配置」为准（不设每日上限，
               硬约束是净投入不超过总投入上限）。
               <br />
-              这里只记金额：份额由结算任务按当日收盘净值折算后自动补上，无需填写；
-              减仓实际按份额下单，结算完成后到「加减仓记录」查看对应的减仓份额。
+              加仓按金额记、结算后自动折算份额；减仓请在下面直接填份额，
+              成交金额由结算任务按当日收盘净值回填。
+            </div>
+          </div>
+        )}
+
+        {(action === 'reduce' || action === 'sell') && (
+          <div className="field">
+            <label>卖出份额（可选，建议填）</label>
+            <input
+              className="input"
+              value={shares}
+              onChange={(e) => setShares(e.target.value)}
+              inputMode="decimal"
+              placeholder="如 200.00，留空则按金额折算"
+            />
+            <div className="faint" style={{ fontSize: 12, marginTop: 4, lineHeight: 1.7 }}>
+              场外基金赎回按份额下单：填了就以这个份额成交，金额按当日收盘净值回填；
+              留空沿用旧口径，由结算任务拿金额 ÷ 净值折算。
             </div>
           </div>
         )}

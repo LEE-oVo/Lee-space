@@ -106,6 +106,8 @@ function ensureFundAdviceColumns(database) {
   // 波段交易：卖出意图 + 计划回补价。复盘时靠它把「波段」和「降风险」分开评估
   addColumn(database, 'fund_advice', 'intent', 'intent TEXT');
   addColumn(database, 'fund_advice', 'buy_back_price', 'buy_back_price REAL');
+  // 减仓按份额下单：有这个字段就按份额结算，老记录 NULL 继续走 amount / nav
+  addColumn(database, 'fund_advice', 'shares', 'shares REAL');
 
   // 唯一键从 (code, trade_date) 扩成 (code, trade_date, source)。
   // 老索引同名但定义不同，CREATE IF NOT EXISTS 会直接跳过，必须先 DROP 再建

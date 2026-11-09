@@ -178,6 +178,9 @@ CREATE TABLE IF NOT EXISTS fund_advice (
   confidence   TEXT    CHECK (confidence IN ('low', 'medium', 'high')),
   -- 建议金额（元）：正数=买入/加仓，负数=减仓/卖出，0 或空=维持不动
   amount       REAL,
+  -- 减仓/卖出的指令份额：场外基金只能按份额下单，金额只是份额×收盘净值的结果。
+  -- 有值时结算优先按它成交；老记录为 NULL，仍按 amount / nav 折算（历史口径不变）
+  shares       REAL,
   -- 用户是否按建议实际操作了，供模型回看真实仓位变化
   executed     INTEGER NOT NULL DEFAULT 0,
   -- 结算：用当日收盘净值算出真实份额与费用后回填，settled=1 保证幂等

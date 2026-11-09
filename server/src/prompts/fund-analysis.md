@@ -71,8 +71,8 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
 - **`swingBasis`** —— **今天能卖哪一部分（已逐批算好）**：
   `price` / `priceSource`（`estimate`=盘中估值，`nav`=最近净值）/ `targetPct` / `triggerPct` /
   `lots[]` / `qualifiedCount` / `qualifiedShares` / `candidateAmount` / `sellableAmount` /
-  `suggestedAmount` / `cappedBy` / `feeFreeAmount` / `closedShares` / `closedSellCount` /
-  `belowMinLot` / `note`
+  `suggestedShares` / `suggestedAmount` / `cappedBy` / `feeFreeAmount` / `closedShares` /
+  `closedSellCount` / `belowMinLot` / `note`
   - `lots[]` 每个加仓批次一条：`buyDate` / `unitCost` / `shares` / `closedShares` /
     `gainPct` / `marketValue` / `qualifies`
   - **`qualifies: true` 的批次就是今天可以卖的部分，每批独立判断**
@@ -82,7 +82,11 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
     也不要拿 `lotList` 的原始份额重算一遍
   - `candidateAmount` = 所有达标批次按现价合计
   - **`sellableAmount` = 已和 0 费额度取小后的可卖金额**
-  - **`suggestedAmount` = 再砍成整百的金额，直接拿去报 `amount`**
+  - 🔴 **`suggestedShares` 才是减仓的主指令**：场外基金赎回只能按份额下单，
+    「份额 × 当日收盘净值」算出来的才是金额，不是反过来。直接把 `suggestedShares`
+    填进 `items[].shares`，让达标批次**整批平掉**；别按金额凑整百，那会留下碎份额
+  - **`suggestedAmount` = `suggestedShares × 现价` 的参考金额**，填进 `items[].amount`
+    供账本记录；它不是下单指令，也不再砍整百
   - `cappedBy`：`candidates`=达标金额是上限 / `feeFree`=0 费额度是上限 / `null`=没有达标批次
 - **`lotList`** —— **批次账本（FIFO 顺序）**：`kind`(base/buy) / `buyDate` / `unitCost` /
   `shares` / `costAmount` / `daysHeld` / `feePct` / `feeExempt`
@@ -269,14 +273,16 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
 - 「达标」的门槛是 `swingBasis.triggerPct`（= `targetPct` 减去 0.3pp 噪声余量），
   服务端已经算在 `qualifies` 里，**你不要自己再判断百分比**，也不要写死 3%
 - 所有达标批次的金额合计 = `candidateAmount`
-- **卖出金额直接报 `swingBasis.suggestedAmount`**（服务端已经把达标金额和 0 费额度取过小，
-  再砍成整百）。看 `cappedBy` 决定怎么解释：
-  - `candidates` → 达标的部分可以全卖
-  - `feeFree` → 0 费额度不够，只能卖这么多，**reason 里要说明剩下的下次再卖**
+- **卖出份额直接报 `swingBasis.suggestedShares`**（填 `items[].shares`），
+  **金额报 `swingBasis.suggestedAmount`**（填 `items[].amount`）。
+  服务端已把达标份额与 0 费额度取过小，**不要自己换算、也不要取整**。
+  看 `cappedBy` 决定怎么解释：
+  - `candidates` → 达标批次可以整批卖掉
+  - `feeFree` → 0 费额度不够，只能卖这么多份额，**reason 里要说明剩下的下次再卖**
   - `null`（`qualifiedCount === 0`）→ **今天不做波段，给 hold**
-- `suggestedAmount` 小于 100（或 `belowMinLot = true`）时说明不够一手，给 **hold**，
-  **不要报一笔 `amount=0` 的卖出**（会被服务端拒绝）
-- 单次卖出不超过该基金当前份额的 **50%**
+- `belowMinLot = true`（或 `suggestedShares = 0`）时说明不够一手，给 **hold**，
+  **不要报 `shares=0` 或 `amount=0` 的卖出**（会被服务端拒绝）
+- 单次卖出份额不超过该基金当前份额的 **50%**
 - 必须给 `buyBackPrice`（计划回补价），且 **≤ 现价 × 0.98**
 - 卖出后若没跌到 `buyBackPrice`，说明这次波段没等到：**不要追高买回**，
   也不要因此改口说「当初应该继续持有」
@@ -306,15 +312,16 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
 | 问题 | 看什么 |
 |---|---|
 | **今天能卖哪一部分**（哪几批碰线） | **`swingBasis.lots[].qualifies`** —— 逐批判断 |
-| **能卖多少钱** | **`swingBasis.suggestedAmount`** —— 已与 0 费额度取小并砍整百 |
+| **卖多少份**（下单指令） | **`swingBasis.suggestedShares`** —— 达标批次完整份额，0 费额度不够时按额度折算 |
+| **大约能拿回多少钱**（账本参考） | **`swingBasis.suggestedAmount`** = 份额 × 现价，不是下单指令 |
 | **卖出去扣几成费、消耗哪一批** | **`lotList[0].feePct`** —— FIFO 队首（通常就是底仓，0 费） |
 
 **`cost`（加权总成本）三个问题都答不了**，**不要用它判断任何一件事。**
 `lotList[0]` 也不能用来判断该不该卖，它只回答扣费。
 
 补充规则：
-1. **默认卖出金额 = `suggestedAmount`。** 不要自己放大——
-   赎回费足以把一段波段利润吃掉一半
+1. **默认卖出份额 = `suggestedShares`。** 不要自己放大，也不要按金额凑整——
+   少卖一截会留下残仓，赎回费还会吃掉一段波段利润
 2. 确实要超出 `sellPlan.feeFreeAmount`，必须在 reason 里写明「愿意承担约 X 元赎回费」+ 为什么值得
 3. `cappedBy === null` 时不要卖（除非是 intent=risk 的降风险）
 4. 卖出份额不能超过 `sellPlan.totalShares`，波段不要清仓
@@ -326,10 +333,11 @@ curl -sS -m 25 -H "Authorization: Bearer {{TOKEN}}" {{BASE}}/wb-api/funds/holdin
 
 ### D. 金额与置信度
 
-`amount` 一律是**非负整数**，方向由 action 决定。
-买入/加仓金额必须是 **100 的整数倍**；减仓/卖出也按整百给（波段直接用 `suggestedAmount`）。
-`action=hold` **不要给 amount**（给 0 或省略）；买入/加仓/减仓/卖出**必须给 amount**，
-否则写入会被服务端拒绝。
+`amount` 一律是**非负数**，方向由 action 决定。
+买入/加仓金额必须是 **100 的整数倍**；**减仓/卖出以 `shares` 为准**，
+`amount` 只是 `suggestedShares × 现价` 的参考值，不必整百。
+`action=hold` **不要给 amount 或 shares**（给 0 或省略）；买入/加仓**必须给 amount**；
+**减仓/卖出必须同时给 amount 与 shares**，否则写入会被服务端拒绝。
 
 `confidence` 必须真的分档，**不要一律 medium**：
 - `high` → 单笔可动用 `investment.available` 的 30–40%
@@ -360,10 +368,11 @@ reason 要写清依据：`technicals` 的具体数字、消息面、**哪几批�
 服务端会校验字段格式、归一 stale、削减超额，但下面这些**语义错它查不出来**，
 必须自己先过。任一不过 → 把那条改回 hold 再报，不要带着侥幸 POST：
 
-- [ ] action 合法、金额整百、hold 不带 amount；`intent` 与 `buyBackPrice` 配套齐全
+- [ ] action 合法、买入金额整百、hold 不带 amount / shares；`intent` 与 `buyBackPrice` 配套齐全
 - [ ] confidence 与 skill ③ 的证据分一致，`low` 没有配大额；`reason` 结尾有 `[证据 x/6 → …]`
 - [ ] 所有 buy/add 金额合计 ≤ skill ② 切出的 cap；没有四只同时 add
-- [ ] reduce/sell 金额 ≤ `swingBasis.suggestedAmount`（超出必须在 reason 里写清愿意承担的赎回费）
+- [ ] reduce/sell **必须带 `shares`**，且等于 `swingBasis.suggestedShares`；
+  `amount` 取 `suggestedAmount`，两者都不要自己换算或取整
 - [ ] 加仓后会超 `amountRules.maxWeightPct` 的，reason 里写了理由
 - [ ] 与 `myRecent` 反向的，reason 里写了「是什么变了」
 - [ ] `stale=true` 时 `estimate` / `estimatePct` **同时**为 null
@@ -392,6 +401,7 @@ curl -sS -m 40 -X POST {{BASE}}/wb-api/funds/ingest \
       "action": "reduce",
       "intent": "swing",
       "confidence": "medium",
+      "shares": 1450.5,
       "amount": 1500,
       "buyBackPrice": 0.98,
       "summary": "一句话结论",
@@ -406,6 +416,9 @@ curl -sS -m 40 -X POST {{BASE}}/wb-api/funds/ingest \
 - `nav` / `navDate` 直接用 `quote` 里的同名字段
 - 估值字段直接用 `quote` 的 `estimate` / `estimatePct`（`fresh` 为 false 时两者都填 null）
 - `intent` 只在 reduce / sell 时需要；`buyBackPrice` 只在 `intent=swing` 时需要
+- 🔴 **`shares` 是减仓/卖出的主指令**：直接取 `swingBasis.suggestedShares`。
+  结算任务会按这个份额成交，再按当日收盘净值回填实际金额；
+  `amount` 只是写进账本的参考值，**不要拿它反推份额**
 - `navSeries` 可省略：服务端已有相同数据
 
 服务端入库时还会按自己的快照统一覆盖一次估值，保证页面显示的是服务端统一口径。
@@ -425,10 +438,10 @@ curl -sS -m 40 -X POST {{BASE}}/wb-api/funds/ingest \
 ## 第五步：汇报（简短，我要赶时间操作）
 
 固定 5 行以内：
-1. 每只基金的建议与金额（一行一只）
-2. 今天买多少 / 卖多少 / 净投入变化、**剩余额度还剩多少、加仓后各基金占比**（带上 regime）
-3. 如果有波段：**哪几批达标（日期 + 涨幅）**、合计金额、实际卖出额、回补价、
-   是被 0 费额度截断了还是全卖
+1. 每只基金的建议（一行一只）：**减仓必须给份额**（`xxx 份`，括号里附约合金额），加仓给金额
+2. 今天买多少 / 卖出多少份（约合金额）/ 净投入变化、**剩余额度还剩多少、加仓后各基金占比**（带上 regime）
+3. 如果有波段：**哪几批达标（日期 + 涨幅）**、合计份额、实际赎回份额、回补价、
+   是被 0 费额度截断了还是整批卖掉
 4. 离目标收益率还有多远
 5. 有没有数据不可靠（stale）、被额度削减、自检闸门拦下过什么、被保护跳过（skipped），或超集中度上限
 

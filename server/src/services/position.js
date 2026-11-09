@@ -165,10 +165,18 @@ function settleBuy({ code, date, nav, amount, feePct, source }) {
   return { shares, fee: round2(fee), net: round2(net), unitCost };
 }
 
-/** 卖出结算：按批次 FIFO，逐笔算持有天数、赎回费与已实现盈亏 */
-function settleSell({ code, date, nav, amount, feeRules }) {
+/**
+ * 卖出结算：按批次 FIFO，逐笔算持有天数、赎回费与已实现盈亏。
+ *
+ * 份额优先（2026-11-09 起）：场外基金赎回只能按份额下单，金额是「份额 × 收盘净值」
+ * 算出来的结果。`shares` 有值就直接用它成交，`amount` 只作账本参考；
+ * 老记录没有这个字段，仍然按 `amount / nav` 折算，结果一分不差。
+ */
+function settleSell({ code, date, nav, amount, feeRules, shares = null }) {
   const db = getDb();
-  const needShares = amount / nav;
+  const want = Number(shares);
+  const byShares = Number.isFinite(want) && want > 0;
+  const needShares = byShares ? want : amount / nav;
   const lots = db
     .prepare(`SELECT * FROM fund_lots WHERE code = ? AND remain > 0 ORDER BY buy_date, id`)
     .all(code);
@@ -204,10 +212,17 @@ function settleSell({ code, date, nav, amount, feeRules }) {
     updateRemain.run(round2(lot.remain - take), lot.id);
   }
 
+  // 实际成交金额 = 真正卖掉的份额 × 收盘净值。按份额下单时它才是账本该记的数，
+  // 不能拿请求金额顶替（请求金额是按估值算的，和收盘价有偏差）
+  const gross = round2(usedShares * nav);
+  const booked = byShares ? gross : amount;
   return {
     shares: round2(usedShares),
     fee: round2(totalFee),
-    net: round2(amount - totalFee),
+    net: round2(booked - totalFee),
+    /** 实际成交金额；byShares=true 时用它回填 settled_amount */
+    gross,
+    byShares,
     realized: round2(realized),
     breakdown,
     // 份额不够卖时如实告知，不静默截断
@@ -462,14 +477,20 @@ export function settleDay(tradeDate, navMap = {}, settledBy = null) {
 
       // reduce / sell
       const rules = parseFeeRules(holding?.redemption_fee);
-      const r = settleSell({ code: row.code, date: row.trade_date, nav, amount: row.amount, feeRules: rules });
+      const r = settleSell({
+        code: row.code, date: row.trade_date, nav,
+        amount: row.amount, shares: row.shares, feeRules: rules,
+      });
+      // 按份额成交时账本记实际成交金额；老记录（无 shares）仍记原请求金额，口径不变
+      const bookedAmount = r.byShares ? r.gross : row.amount;
       db.prepare(`UPDATE fund_holdings SET realized = COALESCE(realized, 0) + ? WHERE code = ?`)
         .run(r.realized, row.code);
-      mark.run(nav, r.shares, r.fee, row.amount, r.realized, settledBy, now(), row.id);
+      mark.run(nav, r.shares, r.fee, bookedAmount, r.realized, settledBy, now(), row.id);
       syncHolding(row.code);
       done.push({
         code: row.code, date: row.trade_date, action: row.action, nav,
-        amount: row.amount, shares: r.shares, fee: r.fee, realized: r.realized,
+        amount: bookedAmount, shares: r.shares, fee: r.fee, realized: r.realized,
+        byShares: r.byShares,
         breakdown: r.breakdown, shortfall: r.shortfall, avgCost: syncCost(row.code),
       });
     }
@@ -1181,18 +1202,32 @@ export function swingBasis(code, price, holding = null, feeFreeAmount = null, pr
     sellableAmount = free;
     cappedBy = 'feeFree';
   }
-  // 金额必须整百，服务端直接砍好，省得模型再算一遍又算错
-  const suggestedAmount = Math.floor(sellableAmount / 100) * 100;
-  // 已平掉大半后可能只剩几块钱：这时 qualifiedCount 仍 > 0，但报出去会让
-  // /ingest 因 amount=0 拒绝。明确标出来，别让 note 说「可以全卖」误导模型。
-  const belowMinLot = qualified.length > 0 && suggestedAmount < 100;
+  // 减仓以份额为主指令：达标批次能整批卖就整批卖，别按金额砍整百留下碎份额。
+  // 只有 0 费额度不够时，才按额度反算今天能卖多少份。
+  let suggestedShares = 0;
+  if (qualified.length) {
+    suggestedShares = cappedBy === 'feeFree'
+      ? Math.min(candidateShares, round2(sellableAmount / px))
+      : candidateShares;
+    suggestedShares = round2(Math.max(0, suggestedShares));
+  }
+  // 金额只是「份额 × 现价」的结果，不再砍整百。砍整百会无端少卖一截份额，
+  // 下一轮又变成残仓，正好是波段重复建议的温床。
+  let suggestedAmount = round2(suggestedShares * px);
+  // 只剩几块钱时不值得单独赎回，且金额会被 round 成 0 导致 /ingest 拒绝。
+  // 阈值按金额给：0 费额度受限时几十块钱仍是一笔有效卖出，不能误判成「不足一手」。
+  const belowMinLot = qualified.length > 0 && suggestedAmount < 10;
+  if (belowMinLot) {
+    suggestedShares = 0;
+    suggestedAmount = 0;
+  }
 
   const closedNote = closedShares > 0.000001
     ? `已扣除 ${round2(closedShares)} 份此前减仓过的加仓批次（不再重复建议）；`
     : '';
   let note;
   if (belowMinLot) {
-    note = `${closedNote}达标批次只剩 ¥${candidateAmount}，砍成整百后不足一手，今天不做波段`;
+    note = `${closedNote}达标批次只剩 ¥${candidateAmount}，不足一手，今天不做波段`;
   } else if (!lots.length) {
     note = closedNote
       ? `${closedNote}已没有剩余可做波段的加仓仓位，今天不做波段`
@@ -1202,10 +1237,12 @@ export function swingBasis(code, price, holding = null, feeFreeAmount = null, pr
     note = `${closedNote}${lots.length} 个加仓批次都没到 ${target}%（最好的是 ${best.buyDate} @${best.unitCost}，`
       + `现价 ${best.gainPct}%），今天不做波段`;
   } else if (cappedBy === 'feeFree') {
-    note = `${closedNote}${qualified.length} 个批次达标，合计 ¥${candidateAmount}，`
-      + `但 0 费额度只有 ¥${free}，只能卖 ¥${sellableAmount}；剩下的等额度恢复（或下个交易日）再卖`;
+    note = `${closedNote}${qualified.length} 个批次达标，合计 ${candidateShares} 份 / ¥${candidateAmount}，`
+      + `但 0 费额度只有 ¥${free}，今天只卖 ${suggestedShares} 份（约 ¥${suggestedAmount}）；`
+      + `剩下的等额度恢复（或下个交易日）再卖`;
   } else {
-    note = `${closedNote}${qualified.length} 个批次达标，合计 ¥${candidateAmount}，0 费额度够，可以全卖`;
+    note = `${closedNote}${qualified.length} 个批次达标，可赎回 ${suggestedShares} 份`
+      + `（约 ¥${suggestedAmount}），0 费额度够，可以整批卖掉`;
   }
 
   return {
@@ -1227,9 +1264,11 @@ export function swingBasis(code, price, holding = null, feeFreeAmount = null, pr
     candidateAmount,
     /** 实际可卖金额（已和 0 费额度取小） */
     sellableAmount,
-    /** 再砍成整百，模型直接用这个数报 amount */
+    /** 今天该赎回的份额：减仓的主指令，直接填进 payload 的 items[].shares */
+    suggestedShares,
+    /** 参考金额 = suggestedShares × 现价，只是账本用的换算结果，不是下单指令 */
     suggestedAmount,
-    /** true = 还剩一点达标份额但不足一手，今天应给 hold，不要报 amount=0 的卖出 */
+    /** true = 还剩一点达标份额但不足一手，今天应给 hold，不要报极小卖出 */
     belowMinLot,
     /** candidates=受限于达标金额；feeFree=受限于 0 费额度；null=没有达标批次 */
     cappedBy,

@@ -424,6 +424,7 @@ router.post('/records', requirePermission('fund:manage'), denyGuest, (req, res) 
     tradeDate: req.body?.tradeDate,
     action: req.body?.action,
     amount: req.body?.amount,
+    shares: req.body?.shares,
     nav: req.body?.nav,
     note: req.body?.note,
   });

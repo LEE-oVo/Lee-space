@@ -61,6 +61,23 @@ function resolveAmount(action, rawAmount, at, errors) {
   return { ok: true, amount };
 }
 
+/**
+ * 份额校验（只对 reduce / sell 有效）：
+ * 场外基金赎回按份额下单，金额只是「份额 × 收盘净值」算出来的结果。
+ * 省略时回落老的 amount / nav 口径，历史记录与旧任务完全兼容。
+ * 非法值直接报错而不是静默忽略——静默忽略会悄悄按金额结算，那是最坏的结果。
+ */
+function resolveShares(action, rawShares, at, errors) {
+  if (action !== 'reduce' && action !== 'sell') return null;
+  if (rawShares === undefined || rawShares === null || rawShares === '') return null;
+  const n = Number(rawShares);
+  if (!Number.isFinite(n) || n <= 0 || n > 100000000) {
+    errors.push(`${at}.shares 非法：${rawShares}（应为正数份额，或省略走金额口径）`);
+    return null;
+  }
+  return Math.round(n * 100) / 100;
+}
+
 function parseNum(value) {
   if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
@@ -86,6 +103,8 @@ function mapAdvice(row) {
     confidence: row.confidence || null,
     // 金额一律为非负数，方向由 action 决定（正=买/加，减仓卖出也记正数）
     amount: row.amount === null || row.amount === undefined ? null : row.amount,
+    /** 减仓/卖出的指令份额；null = 老记录，按金额结算 */
+    shares: row.shares ?? null,
     executed: Boolean(row.executed),
     settled: Boolean(row.settled),
     settledNav: row.settled_nav ?? null,
@@ -434,7 +453,7 @@ const DISPLAY_ORDER = { manual: 0, workbuddy: 1, glm: 2, trae: 3 };
  * 手动补记一笔实际操作：覆盖当天该基金的建议，并直接标记为已执行。
  * 金额规则与定时任务共用同一套校验，避免两处规则不一样。
  */
-export function upsertManualRecord({ code, tradeDate, action, amount, nav, note }) {
+export function upsertManualRecord({ code, tradeDate, action, amount, shares, nav, note }) {
   const errors = [];
   const c = String(code || '').trim();
   const d = String(tradeDate || '').trim();
@@ -445,7 +464,8 @@ export function upsertManualRecord({ code, tradeDate, action, amount, nav, note 
   if (!FUND_ACTIONS.includes(act)) errors.push(`action 非法：${act}，可选 ${FUND_ACTIONS.join('/')}`);
 
   const resolved = errors.length === 0 ? resolveAmount(act, amount, 'record', errors) : { ok: false };
-  if (!resolved.ok) return { ok: false, errors };
+  const sharesValue = errors.length === 0 ? resolveShares(act, shares, 'record', errors) : null;
+  if (!resolved.ok || errors.length > 0) return { ok: false, errors };
 
   const db = getDb();
   const t = now();
@@ -460,14 +480,15 @@ export function upsertManualRecord({ code, tradeDate, action, amount, nav, note 
   const info = db
     .prepare(
       `INSERT INTO fund_advice
-         (code, trade_date, source, action, confidence, amount, nav, nav_date, summary,
+         (code, trade_date, source, action, confidence, amount, shares, nav, nav_date, summary,
           reason, risks, sources, stale, model, executed, created_at, updated_at)
        VALUES
-         (@code, @tradeDate, 'manual', @action, NULL, @amount, @nav, @tradeDate, @summary,
+         (@code, @tradeDate, 'manual', @action, NULL, @amount, @shares, @nav, @tradeDate, @summary,
           NULL, '[]', '[]', 0, 'manual', 1, @t, @t)
        ON CONFLICT(code, trade_date, source) DO UPDATE SET
          action = excluded.action,
          amount = excluded.amount,
+         shares = excluded.shares,
          nav = COALESCE(excluded.nav, fund_advice.nav),
          summary = excluded.summary,
          model = 'manual',
@@ -479,6 +500,7 @@ export function upsertManualRecord({ code, tradeDate, action, amount, nav, note 
       tradeDate: d,
       action: act,
       amount: resolved.amount,
+      shares: sharesValue,
       nav: nav === undefined || nav === null || nav === '' ? null : Number(nav),
       summary: String(note || '').slice(0, 200) || '手动补记',
       t,
@@ -823,6 +845,8 @@ export function ingestAdvice(payload, options = {}) {
     const resolved = resolveAmount(action, raw?.amount, at, errors);
     if (!resolved.ok) return;
     const amount = resolved.amount;
+    // 减仓以份额为主指令；省略就回落金额口径（老任务、老记录照常工作）
+    const shares = resolveShares(action, raw?.shares, at, errors);
 
     if (Array.isArray(raw?.navSeries)) {
       const points = [];
@@ -841,6 +865,7 @@ export function ingestAdvice(payload, options = {}) {
       action,
       confidence: confidence || null,
       amount,
+      shares,
       nav: parseNum(raw?.nav),
       navDate,
       estimate: parseNum(raw?.estimate),
@@ -946,13 +971,14 @@ export function ingestAdvice(payload, options = {}) {
 
   const upsert = db.prepare(
     `INSERT INTO fund_advice
-       (code, trade_date, source, action, confidence, amount, nav, nav_date, estimate, estimate_pct, nav_pct,
+       (code, trade_date, source, action, confidence, amount, shares, nav, nav_date, estimate, estimate_pct, nav_pct,
         summary, reason, risks, sources, stale, intent, buy_back_price, model, created_at, updated_at)
      VALUES
-       (@code, @tradeDate, @source, @action, @confidence, @amount, @nav, @navDate, @estimate, @estimatePct, @navPct,
+       (@code, @tradeDate, @source, @action, @confidence, @amount, @shares, @nav, @navDate, @estimate, @estimatePct, @navPct,
         @summary, @reason, @risks, @sources, @stale, @intent, @buyBackPrice, @model, @now, @now)
      ON CONFLICT(code, trade_date, source) DO UPDATE SET
        action = excluded.action, confidence = excluded.confidence, amount = excluded.amount,
+       shares = excluded.shares,
        nav = excluded.nav,
        nav_date = excluded.nav_date, estimate = excluded.estimate,
        estimate_pct = excluded.estimate_pct, nav_pct = excluded.nav_pct,

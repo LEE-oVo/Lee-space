@@ -179,9 +179,13 @@ export function FundDetailModal({
           ) : waitingShares ? (
             <span
               className="fund-record-shares is-pending"
-              title="要等收盘净值公布、结算任务跑完才有份额"
+              title="减仓建议已给出份额；成交金额要等收盘净值、结算任务跑完才有"
             >
-              {buys ? '加仓份额' : '减仓份额'} 待结算
+              {sells && h.shares != null ? (
+                <>计划赎回 <b className="mono">{sharesText(h.shares)}</b> 份 · 待结算</>
+              ) : (
+                <>{buys ? '加仓份额' : '减仓份额'} 待结算</>
+              )}
             </span>
           ) : null)}
           {/* 只有候选才标来源，被采纳的那条不需要——我不关心是谁建议的 */}
@@ -505,22 +509,24 @@ export function FundDetailModal({
                       {position.swingBasis.priceSource === 'estimate' ? '盘中估值' : '最近净值'}）
                     </span>
                   </div>
-                  {position.swingBasis.qualifiedCount > 0 ? (
+                  {position.swingBasis.qualifiedCount > 0 && !position.swingBasis.belowMinLot ? (
                     <div>
                       <span className="up">{position.swingBasis.qualifiedCount} 个达标</span>
-                      ，合计 ¥{position.swingBasis.candidateAmount.toFixed(2)} → 建议卖出{' '}
+                      ，合计 {position.swingBasis.qualifiedShares.toFixed(2)} 份 → 建议赎回{' '}
                       <span style={{ fontWeight: 500 }}>
-                        ¥{position.swingBasis.suggestedAmount.toLocaleString('zh-CN')}
+                        {position.swingBasis.suggestedShares.toFixed(2)} 份
+                      </span>
+                      <span className="faint">
+                        {' '}（约 ¥{position.swingBasis.suggestedAmount.toFixed(2)}）
                       </span>
                       {position.swingBasis.cappedBy === 'feeFree' && (
                         <span className="faint">
-                          {' '}
-                          （受 0 费额度 ¥{position.swingBasis.feeFreeAmount?.toFixed(0)} 限制）
+                          {' '}· 受 0 费额度 ¥{position.swingBasis.feeFreeAmount?.toFixed(0)} 限制，剩下的下次再卖
                         </span>
                       )}
                     </div>
                   ) : (
-                    <div className="faint">暂无达标批次，今天不做波段</div>
+                    <div className="faint">暂无达标批次或剩余不足一手，今天不做波段</div>
                   )}
                   <div className="faint">
                     {position.swingBasis.lots
